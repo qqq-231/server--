@@ -148,7 +148,11 @@ typedef struct {
     uint64_t features[SUPER_FEATURE_PER_CHUNK];// 特征向量
     KeyForChunkHashDB_t addr; // 存储地址信息
     uint32_t size;// 块大小
+    // Original encrypted size while a tentative local Delta waits for the
+    // client's compressed representation.
+    uint32_t logical_size;
     uint8_t stat; // 状态标志
+    uint8_t compressed_fp[CHUNK_HASH_SIZE]; // 客户端计算的加密压缩数据的哈希
 } ChunkInfo_t;
 
 typedef struct {
@@ -162,6 +166,21 @@ typedef struct {
     uint8_t* buf;
     uint32_t cnt;
 } BatchBuf_t;// 批量缓冲区
+
+// 客户端明文缓冲区条目（用于补发加密压缩数据）
+typedef struct {
+    uint8_t plaintext[MAX_CHUNK_SIZE];
+    uint32_t plaintext_size;
+    uint8_t key[CHUNK_HASH_SIZE];
+    uint64_t seed;
+} PlaintextEntry_t;
+
+// 客户端→服务器补发响应
+typedef struct {
+    uint8_t compressed_fp[CHUNK_HASH_SIZE];
+    uint32_t enc_comp_size;
+    uint8_t enc_comp_data[ENC_MAX_CHUNK_SIZE];
+} RecompressResponse_t;
 
 typedef struct {
     SendChunk_t input_chunk;

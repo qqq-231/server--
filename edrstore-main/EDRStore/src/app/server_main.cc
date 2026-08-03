@@ -13,6 +13,7 @@
 #include "../../include/network/ssl_conn.h"
 #include "../../include/database/db_factory.h"
 #include "../../include/server/server_opt_thd.h"
+#include "../../include/server/inform_cache.h"
 
 // for the interrupt
 #include <signal.h>
@@ -26,6 +27,7 @@ SSLConnection* server_channel;
 DatabaseFactory db_factory;
 AbsDatabase* fp_2_addr_db;
 AbsDatabase* feature_2_fp_db;
+AbsDatabase* compressed_feature_2_fp_db;
 vector<boost::thread*> thd_list;
 
 // the server main thread
@@ -53,8 +55,10 @@ void CTRLC(int s) {
     delete server_opt_thd;
     tool::Logging(my_name.c_str(), "clear all server threads.\n");
 
+    InformCache::DestroyGlobalCache();
     delete fp_2_addr_db;
     delete feature_2_fp_db;
+    delete compressed_feature_2_fp_db;
     delete server_channel;
 
     tool::Logging(my_name.c_str(), "clear all DBs and network connection.\n");
@@ -84,13 +88,18 @@ int main(int argc, char* argv[]) {
         config.GetFp2ChunkDBName());
     feature_2_fp_db = db_factory.CreateDatabase(LEVELDB_DB,
         config.GetFeature2FpDBName());
+    compressed_feature_2_fp_db = db_factory.CreateDatabase(LEVELDB_DB,
+        config.GetCompressedFeature2FpDBName());
+
+    // 初始化全局统一共享 InformCache
+    InformCache::InitGlobalCache(feature_2_fp_db);
 
     server_channel = new SSLConnection(config.GetStorageServerIP(),
         config.GetStorageServerPort(), IN_SERVER_SIDE);
 
     // init
     server_opt_thd = new ServerOptThd(server_channel, fp_2_addr_db,
-        feature_2_fp_db);
+        feature_2_fp_db, compressed_feature_2_fp_db);
 
     /**
      * |---------------------------------------|

@@ -5,19 +5,8 @@
 
 #include "../../include/chunker/odess_simple.h"
 #include "../../include/chunker/gear_poly.h"
-
-#include"../../include/const_var.h"
-
-
-static uint32_t M[] = {
-    0x5b49898a, 0xe4f94e27, 0x95f658b2, 0x8f9c99fc, 0xeba8d4d8, 0xba2c8e92,
-    0xa868aeb4, 0xd767df82, 0x843606a4, 0xc1e70129, 0x32d9d1b0, 0xeb91e53c,
-};
-
-static uint32_t A[] = {
-    0xff4be8c,  0x6f485986, 0x12843ff,  0x5b47dc4d, 0x7faa9b8a, 0xd547b8ba,
-    0xf9979921, 0x4f5400da, 0x725f79a9, 0x3c9321ac, 0x32716d,   0x3f5adf5d,
-};
+#include "../../include/const_var.h"
+#include "../../include/MA.h"
 
 
 

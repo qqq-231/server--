@@ -7,8 +7,8 @@
         "sliding_win_size": 128,
         "read_size": 128,
         "mask": "0x00FF",
-        "feature_1": "odess",
-        "feature_2": "finesse"
+        "feature_1": "odess_start",
+        "feature_2": "odess_start"
 
 
 
@@ -25,6 +25,7 @@
         "cache_root_path": "Cache/",
         "fp_2_chunk_db": "fp_chunk_db",
         "feature_2_fp_db": "feature_fp_db",
+        "compressed_feature_2_fp_db": "compressed_feature_fp_db",
         "container_cache_size": 512
     },
     "KeyServer": {

@@ -73,13 +73,22 @@ void DataDecoderThd::Run(ClientVar* cur_client) {
             total_proc_time += tool::GetTimeDiff(proc_stime, proc_etime);
 
             if (send_chunk_buf->header->cur_item_num % send_chunk_batch_size_ == 0) {
-                this->SendChunks(cur_client);
+                if (!this->SendChunks(cur_client)) {
+                    break;
+                }
             }
         }
     }
 
     if (send_chunk_buf->header->cur_item_num != 0) {
-        this->SendChunks(cur_client);
+        if (!this->SendChunks(cur_client)) {
+            gettimeofday(&etime, NULL);
+            total_running_time += tool::GetTimeDiff(stime, etime);
+            tool::Logging(my_name_.c_str(), "thread exits early (client disconnected), "
+                "total proc time: %lf, total running time: %lf\n",
+                total_proc_time, total_running_time);
+            return ;
+        }
     }
     this->SendEnd(cur_client, client_ip);
 
@@ -108,8 +117,18 @@ void DataDecoderThd::DecodeChunk(Reader2Decoder_t* raw_chunk,
         case COMP_DELTA_CHUNK: {
             // need delta decoding
             if (raw_chunk->base_chunk.header.type != COMP_BASE_CHUNK) {
-                tool::Logging(my_name_.c_str(), "exists multi-level delta.\n");
-                exit(EXIT_FAILURE);
+                // 多级增量：透传给客户端处理，不崩溃
+                tool::Logging(my_name_.c_str(), "exists multi-level delta, "
+                    "pass through.\n");
+                raw_chunk->input_chunk.header.type = MULTI_LEVEL_DELTA_CHUNK;
+                memcpy(send_chunk_buf->data_buf + send_chunk_buf->header->size,
+                    &raw_chunk->input_chunk.header, sizeof(SendChunkHeader_t));
+                send_chunk_buf->header->size += sizeof(SendChunkHeader_t);
+                memcpy(send_chunk_buf->data_buf + send_chunk_buf->header->size,
+                    raw_chunk->input_chunk.data, raw_chunk->input_chunk.header.size);
+                send_chunk_buf->header->size += raw_chunk->input_chunk.header.size;
+                send_chunk_buf->header->cur_item_num++;
+                break;
             }
             // perform delta decoding
             output_chunk.header.size = delta_comp_->DeltaDecode(
@@ -202,6 +221,18 @@ void DataDecoderThd::DecodeChunk(Reader2Decoder_t* raw_chunk,
             send_chunk_buf->header->cur_item_num++;
             break;
         }
+        case UNCOMP_BASE_CHUNK: {
+            // write data to the send buf (no decompression needed, only decrypt)
+            raw_chunk->input_chunk.header.type = UNCOMP_NORMAL_CHUNK;
+            memcpy(send_chunk_buf->data_buf + send_chunk_buf->header->size,
+                &raw_chunk->input_chunk.header, sizeof(SendChunkHeader_t));
+            send_chunk_buf->header->size += sizeof(SendChunkHeader_t);
+            memcpy(send_chunk_buf->data_buf + send_chunk_buf->header->size,
+                raw_chunk->input_chunk.data, raw_chunk->input_chunk.header.size);
+            send_chunk_buf->header->size += raw_chunk->input_chunk.header.size;
+            send_chunk_buf->header->cur_item_num++;
+            break;
+        }
         default: {
             tool::Logging(my_name_.c_str(), "wrong chunk type when sending.\n");
             exit(EXIT_FAILURE);
@@ -216,21 +247,21 @@ void DataDecoderThd::DecodeChunk(Reader2Decoder_t* raw_chunk,
  * 
  * @param cur_client current client 
  */
-void DataDecoderThd::SendChunks(ClientVar* cur_client) {
+bool DataDecoderThd::SendChunks(ClientVar* cur_client) {
     SendMsgBuffer_t* send_chunk_buf = &cur_client->_send_chunk_buf;
     send_chunk_buf->header->msg_type = SERVER_RESTORE_CHUNK;
     if (!server_channel_->SendData(cur_client->_client_ssl,
         send_chunk_buf->send_buf,
         send_chunk_buf->header->size + sizeof(NetworkHead_t))) {
         tool::Logging(my_name_.c_str(), "send the restore chunk batch error.\n");
-        exit(EXIT_FAILURE);
+        return false;
     }
 
     // clear the current send chunk buffer
     send_chunk_buf->header->cur_item_num = 0;
     send_chunk_buf->header->size = 0;
 
-    return ;
+    return true;
 }
 
 /**
@@ -241,13 +272,16 @@ void DataDecoderThd::SendChunks(ClientVar* cur_client) {
  */
 void DataDecoderThd::SendEnd(ClientVar* cur_client, string& client_ip) {
     SendMsgBuffer_t* send_chunk_buf = &cur_client->_send_chunk_buf;
-    send_chunk_buf->header->msg_type = SERVER_RESTORE_FINAL; 
+    send_chunk_buf->header->msg_type = SERVER_RESTORE_FINAL;
     SSL* client_ssl = cur_client->_client_ssl;
 
     if (!server_channel_->SendData(client_ssl, send_chunk_buf->send_buf,
         sizeof(NetworkHead_t))) {
-        tool::Logging(my_name_.c_str(), "send the restore end flag error.\n");
-        exit(EXIT_FAILURE);
+        tool::Logging(my_name_.c_str(), "send the restore end flag error, "
+            "client may have disconnected.\n");
+        server_channel_->GetClientIp(client_ip, client_ssl);
+        server_channel_->ClearAcceptedClientSd(client_ssl);
+        return ;
     }
 
     uint32_t recv_size = 0;
@@ -257,8 +291,10 @@ void DataDecoderThd::SendEnd(ClientVar* cur_client, string& client_ip) {
         server_channel_->GetClientIp(client_ip, client_ssl);
         server_channel_->ClearAcceptedClientSd(client_ssl);
     } else {
-        tool::Logging(my_name_.c_str(), "client closed the connection error.\n");
-        exit(EXIT_FAILURE);
+        tool::Logging(my_name_.c_str(), "client sent unexpected data after FINAL, "
+            "closing connection.\n");
+        server_channel_->GetClientIp(client_ip, client_ssl);
+        server_channel_->ClearAcceptedClientSd(client_ssl);
     }
 
     return ;

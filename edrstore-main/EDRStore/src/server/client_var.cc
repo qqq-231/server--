@@ -36,7 +36,6 @@ ClientVar::ClientVar(uint32_t client_id, SSL* client_ssl,
     // init the container cache
     _container_cache = new ReadCache(config.GetContainerCacheSize(),
         MAX_CONTAINER_SIZE);
-    _inform_cache = new InformCache(_client_id);
 
     switch (opt_type_) {
         case UPLOAD_OPT: {
@@ -60,8 +59,6 @@ ClientVar::ClientVar(uint32_t client_id, SSL* client_ssl,
  */
 ClientVar::~ClientVar() {
     delete _container_cache;
-    *_total_cache_size = _inform_cache->DeleteEvictChunk();
-    delete _inform_cache;
     switch (opt_type_) {
         case UPLOAD_OPT: {
             this->DestroyUploadBuffer();
@@ -95,6 +92,7 @@ void ClientVar::InitUploadBuffer() {
     // rabin fp
     rabin_util_ = new RabinFPUtil(config.GetSimilarSlidingWinSize());
     rabin_util_->NewCtx(_rabin_ctx);
+    rabin_util_->NewCtx(_recompress_rabin_ctx);
 
     // prepare the crypto
     _md_ctx = EVP_MD_CTX_new();
@@ -125,6 +123,8 @@ void ClientVar::InitUploadBuffer() {
         CHUNK_QUEUE_SIZE);
     _comp_2_writer_mq = wrapped_chunk_mq_factory_.CreateMQ(MQ_TYPE_,
         CHUNK_QUEUE_SIZE);
+    _recompress_mq = wrapped_chunk_mq_factory_.CreateMQ(MQ_TYPE_,
+        CHUNK_QUEUE_SIZE);
 
     return ;
 }
@@ -139,6 +139,7 @@ void ClientVar::DestroyUploadBuffer() {
     }
     free(_recipe_batch.buf);
     rabin_util_->FreeCtx(_rabin_ctx);
+    rabin_util_->FreeCtx(_recompress_rabin_ctx);
     free(_recv_chunk_buf.send_buf);
     EVP_MD_CTX_free(_md_ctx);
     EVP_CIPHER_CTX_free(_cipher_ctx);
@@ -147,6 +148,7 @@ void ClientVar::DestroyUploadBuffer() {
     delete _recv_2_dual_mq;
     delete _dual_2_comp_mq;
     delete _comp_2_writer_mq;
+    delete _recompress_mq;
     delete rabin_util_;
     return ;
 }

@@ -4,9 +4,9 @@
  * @brief the main program of client
  * @version 0.1
  * @date 2022-06-07
- * 
+ *
  * @copyright Copyright (c) 2022
- * 
+ *
  */
 
 #include "../../include/configure.h"
@@ -274,7 +274,8 @@ int main(int argc, char* argv[]) {
             cache_meta = new CacheMeta(server_channel, server_conn_record);// 缓存管理
             select_comp_thd = new SelectCompThd(cache_meta, method_type);// 压缩选择
             sender_thd = new SenderThd(server_channel, server_conn_record,
-                file_name_hash, cache_meta); // 数据发送
+                file_name_hash, cache_meta,
+                select_comp_thd->GetCompPad(), select_comp_thd);
 
 #ifdef EDR_BREAKDOWN
             // restore the breakdown status  性能统计恢复（EDR_BREAKDOWN模式）
@@ -383,7 +384,7 @@ int main(int argc, char* argv[]) {
                //密文相似性检测线程
              //使用生成的密钥对块进行加密，并检测加密后的密文块之间的相似性（例如，即使明文相似，加密后是否仍然相似？）。然后将密文
              //块及其相似性信息放入`cipher_similar_mq`队列。
-            tmp_thd = new boost::thread(thd_attrs, boost::bind(&CipherSimilarThd::Run, 
+            tmp_thd = new boost::thread(thd_attrs, boost::bind(&CipherSimilarThd::Run,
                 cipher_similar_thd, key_gen_mq, cipher_similar_mq));
             thd_list.push_back(tmp_thd);
 
@@ -400,13 +401,13 @@ int main(int argc, char* argv[]) {
                 sender_thd, select_comp_mq));
             thd_list.push_back(tmp_thd);
 
-      
+
       	    gettimeofday(&stime, NULL); // 开始计时
-	    for (auto it : thd_list) {
+		    for (auto it : thd_list) {
                 it->join();//启动thd_list里的线程执行
             }
             gettimeofday(&etime, NULL);//结束计时
-	    total_time += tool::GetTimeDiff(stime, etime);
+		    total_time += tool::GetTimeDiff(stime, etime);
             tool::Logging(my_name.c_str(), "%s finish.\n", input_file_path.c_str());
 
             for (auto it : thd_list) {
@@ -421,7 +422,7 @@ int main(int argc, char* argv[]) {
             total_data_size += chunk_fp_thd->_total_file_size;
             //写入日志文件（log_file）
             log_file << total_data_size << ", "
-                << total_chunk_num << ", " 
+                << total_chunk_num << ", "
                 << input_file_path << ", upload, "
                 << chunk_fp_thd->_total_file_size << ", "
                 << chunk_fp_thd->_total_chunk_num << ", "
@@ -451,7 +452,7 @@ int main(int argc, char* argv[]) {
                 << select_comp_thd->_total_comp_pad_time << ", "
                 << select_comp_thd->_total_cache_manage_size << ", "
                 << select_comp_thd->_total_cache_manage_time << endl;
-            
+
             // store the breakdown stat  // 保存详细性能数据
             ofstream out_breakdown_stat_hdl;//创建输出文件流对象
             out_breakdown_stat_hdl.open(breakdown_stat_file_name,
@@ -465,13 +466,13 @@ int main(int argc, char* argv[]) {
                 sizeof(uint64_t));
             out_breakdown_stat_hdl.write((char*)&chunk_fp_thd->_total_fp_time,//计算指纹的总时间
                 sizeof(double));
-            
+
             // plain similar thread   明文相似性检测线程
             out_breakdown_stat_hdl.write((char*)&plain_similar_thd->_total_plain_feature_size,//明文特征提取的数据量
                 sizeof(uint64_t));
             out_breakdown_stat_hdl.write((char*)&plain_similar_thd->_total_plain_feature_time,//明文特征提取的总时间
                 sizeof(double));
-            
+
             // key gen thread        密钥生成
             out_breakdown_stat_hdl.write((char*)&key_gen_thd->_total_two_enc_size,//双加密操作的数据量
                 sizeof(uint64_t));
@@ -517,7 +518,7 @@ int main(int argc, char* argv[]) {
             delete chunker_mq;
             delete plain_similar_mq;
             delete cipher_similar_mq;
-            delete key_gen_mq; 
+            delete key_gen_mq;
             delete select_comp_mq;
 
             //更新客户端状态文件
@@ -557,7 +558,7 @@ int main(int argc, char* argv[]) {
 
             // 消息队列创建
             AbsMQ<Retriever2Writer_t>* retriever_mq =
-                retriever_2_writer_mq_factory.CreateMQ(MQ_TYPE, CHUNK_HASH_SIZE);
+                retriever_2_writer_mq_factory.CreateMQ(MQ_TYPE, CHUNK_QUEUE_SIZE);
 
             // 4. 下载登录认证（传入 start_chunk_idx 支持断点续传）
             data_retriever_thd->DownloadLogin(file_name_hash, start_chunk_idx);
@@ -612,18 +613,18 @@ int main(int argc, char* argv[]) {
     breakdown_client_file_hdl.close();// 关闭性能日志文件
 #endif
 
-    tool::Logging(my_name.c_str(), "total running time: %lf\n", total_time);    
+    tool::Logging(my_name.c_str(), "total running time: %lf\n", total_time);
     log_file.close();//日志关闭
     tool::Logging(my_name.c_str(), "max mem usage: %lu KiB\n",
         tool::GetMaxMemoryUsage());
-    
+
     // cout<< std::put_time(std::localtime(&t), "%F %T ")
     // std::cout << system_clock::now() << '\n';
 //    gettimeofday(&ee, NULL);
     // printf("%d", ee.tv_sec);
     // printf("%d", ee.tv_usec);
   //  cout<<ee.tv_sec<<" "<<ee.tv_usec<<endl;
-    
+
 
     return 0;
 }

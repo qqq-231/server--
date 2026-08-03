@@ -10,6 +10,9 @@
  */
 
 #include "../../include/server/data_writer_thd.h"
+#include "../../include/server/cache_comp_thd.h"
+
+boost::mutex DataWriterThd::compressed_index_lck_;
 
 /**
  * @brief Construct a new DataWriterThd object
@@ -19,10 +22,12 @@
  * @param storage_core storage core
  */
 DataWriterThd::DataWriterThd(AbsDatabase* fp_2_addr_db,
-    AbsDatabase* feature_2_fp_db, StorageCore* storage_core) {
+    AbsDatabase* compressed_feature_2_fp_db, StorageCore* storage_core,
+    CacheCompThd* cache_comp_thd) {
     fp_2_addr_db_ = fp_2_addr_db;
-    feature_2_fp_db_ = feature_2_fp_db;
+    compressed_feature_2_fp_db_ = compressed_feature_2_fp_db;
     storage_core_ = storage_core;
+    cache_comp_thd_ = cache_comp_thd;
     delta_comp_ = new DeltaComp();
     similar_policy_ = new SimilarPolicy();
 }
@@ -32,6 +37,14 @@ DataWriterThd::DataWriterThd(AbsDatabase* fp_2_addr_db,
  * 
  */
 DataWriterThd::~DataWriterThd() {
+    fprintf(stderr, "\n========== Deferred Representation Choice ==========\n");
+    fprintf(stderr, "compared chunks:              %lu\n", deferred_compare_num_);
+    fprintf(stderr, "local / full / comp-delta:    %lu / %lu / %lu\n",
+        deferred_choose_local_num_, deferred_choose_full_num_,
+        deferred_choose_comp_delta_num_);
+    fprintf(stderr, "bytes saved versus local:     %lu\n",
+        deferred_saved_vs_local_);
+    fprintf(stderr, "====================================================\n\n");
     delete delta_comp_;
     delete similar_policy_;
 }
@@ -66,36 +79,45 @@ void DataWriterThd::Run(ClientVar* cur_client) {
         if (input_MQ->Pop(tmp_data)) {
             // check the base chunk // 处理数据块
             gettimeofday(&proc_stime, NULL);
+            bool index_compressed_base = false;
             switch (tmp_data.info.stat) {
                 case CACHE_DELTA_CHUNK: {
                     this->ProcCacheDeltaChunk(&tmp_data, cur_client);
                     break;
                 }
+                case DEFERRED_LOCAL_DELTA_CHUNK: {
+                    this->ProcCacheDeltaChunk(&tmp_data, cur_client);
+                    cache_comp_thd_->RecordDeferredLocal(
+                        tmp_data.info.logical_size, tmp_data.info.size);
+                    break;
+                }
+                case COMPARE_RECOMPRESS_CHUNK: {
+                    index_compressed_base = this->ProcDeferredComparison(
+                        &tmp_data, cur_client);
+                    break;
+                }
                 case UNIQUE_CHUNK: {
-                    similar_policy_->FindBaseChunk(feature_2_fp_db_,
-                        &tmp_data.info);
-                    switch (tmp_data.info.stat) {
-                        case SIMILAR_CHUNK: {
-                            _total_similar_chunk_num++;
-                            _total_similar_data_size += tmp_data.info.size;
-                            this->ProcSimilarChunk(&tmp_data, cur_client);
-                            break;
-                        }
-                        case NON_SIMILAR_CHUNK: {
-                            this->ProcNonSimilarChunk(&tmp_data, cur_client);
-                            similar_policy_->UpdateFeatureIndex(
-                                feature_2_fp_db_,
-                                tmp_data.info.features,
-                                tmp_data.info.fp
-                            );
-                            break;
-                        }
-                        default: {
-                            tool::Logging(my_name_.c_str(),
-                                "wrong unique chunk type.\n");
-                            exit(EXIT_FAILURE);
-                        }
+                    // Recompress responses carry uncompressed-ciphertext
+                    // features, so keep them out of the compressed domain.
+                    this->ProcNonSimilarChunk(&tmp_data, cur_client);
+                    break;
+                }
+                case UNIQUE_CHUNK_AFTER_CACHE: {
+                    // The payload and features are both from the compressed-
+                    // ciphertext representation. Only full COMP_BASE chunks
+                    // are published as future bases, preventing delta chains.
+                    if (!this->ProcCompressedSimilarChunk(&tmp_data,
+                        cur_client)) {
+                        this->ProcNonSimilarChunk(&tmp_data, cur_client);
+                        index_compressed_base = true;
                     }
+                    break;
+                }
+                case UNCOMP_BASE_CHUNK: {
+                    // fallback from recompress: uncompressed encrypted data
+                    // store as uncompressed base (download: decrypt only, no decompress)
+                    this->ProcNonSimilarChunk(&tmp_data, cur_client);
+                    tmp_data.info.addr.stat = UNCOMP_BASE_CHUNK;
                     break;
                 }
                 default: {
@@ -108,6 +130,15 @@ void DataWriterThd::Run(ClientVar* cur_client) {
             // update the fp index   指纹-地址数据库更新
             fp_2_addr_db_->InsertBothBuffer((char*)tmp_data.info.fp, CHUNK_HASH_SIZE,
                 (char*)&tmp_data.info.addr, sizeof(KeyForChunkHashDB_t));
+
+            // Publish the feature mapping only after the full base address is
+            // durable in fp_2_addr_db_. COMP_DELTA chunks never reach here.
+            if (index_compressed_base) {
+                boost::mutex::scoped_lock lock(compressed_index_lck_);
+                similar_policy_->UpdateFeatureIndex(
+                    compressed_feature_2_fp_db_, tmp_data.info.features,
+                    tmp_data.info.fp);
+            }
             
             gettimeofday(&proc_etime, NULL);
             total_proc_time += tool::GetTimeDiff(proc_stime, proc_etime);
@@ -128,48 +159,87 @@ void DataWriterThd::Run(ClientVar* cur_client) {
     return ;
 }
 
-/**
- * @brief process a similar chunk
- * 
- * @param input_chunk input chunk
- * @param cur_client current client
- */
-void DataWriterThd::ProcSimilarChunk(WrappedChunk_t* input_chunk,
-    ClientVar* cur_client) {
-    uint8_t base_chunk[ENC_MAX_CHUNK_SIZE];
-    uint32_t base_chunk_size = 0;
-    uint8_t delta_chunk[ENC_MAX_CHUNK_SIZE];
-    uint32_t delta_chunk_size = 0;
-
-    //获取基准块
-    base_chunk_size = this->FetchBaseChunk(input_chunk->info.addr.base_fp,
-        base_chunk, cur_client);
-
-    if(base_chunk_size == 0){
-        // // 避免增量压缩，直接写入原始数据    基准块获取失败
-        // 处理基准块不存在时的降级处理
-        // 直接存储原始数据，确保数据不丢失
-        // avoid delta, directly write
-        storage_core_->WriteChunk(&input_chunk->info.addr, input_chunk->data,
-        input_chunk->info.size, cur_client);
+bool DataWriterThd::FindBestCompressedDelta(WrappedChunk_t* input_chunk,
+    ClientVar* cur_client, CompressedDeltaResult& result) {
+    result = CompressedDeltaResult();
+    vector<string> candidates;
+    {
+        boost::mutex::scoped_lock lock(compressed_index_lck_);
+        similar_policy_->GetBaseCandidates(compressed_feature_2_fp_db_,
+            input_chunk->info.features, candidates);
     }
+    if (candidates.empty()) return false;
+
+    uint8_t base_chunk[ENC_MAX_CHUNK_SIZE];
+    uint8_t delta_chunk[ENC_MAX_CHUNK_SIZE];
+    uint32_t best_delta_size = input_chunk->info.size;
+    vector<string> invalid_candidates;
+
+    for (const auto& candidate : candidates) {
+        string base_addr_str;
+        if (!fp_2_addr_db_->QueryBuffer(candidate.data(), CHUNK_HASH_SIZE,
+            base_addr_str) || base_addr_str.size() < sizeof(KeyForChunkHashDB_t)) {
+            invalid_candidates.push_back(candidate);
+            continue;
+        }
+
+        KeyForChunkHashDB_t base_addr;
+        memcpy(&base_addr, base_addr_str.data(), sizeof(base_addr));
+        if (base_addr.stat != COMP_BASE_CHUNK) {
+            invalid_candidates.push_back(candidate);
+            continue;
+        }
+
+        // A base in another client's not-yet-flushed tail container is
+        // temporarily unavailable. Skip it without deleting its valid index.
+        if (!storage_core_->ReadChunk(&base_addr, base_chunk, cur_client)) {
+            continue;
+        }
 
 #ifdef EDR_BREAKDOWN
-    gettimeofday(&_comp_delta_stime, NULL);
+        struct timeval delta_stime;
+        struct timeval delta_etime;
+        gettimeofday(&delta_stime, NULL);
 #endif
-    //计算当前块与基准块的差异
-    //生成增量编码数据
-    //增量编码
-    delta_chunk_size = delta_comp_->DeltaEncode(base_chunk, base_chunk_size,
-        input_chunk->data, input_chunk->info.size, delta_chunk);
-//存储增量数据
-    storage_core_->WriteChunk(&input_chunk->info.addr, delta_chunk,
-        delta_chunk_size, cur_client);
-    input_chunk->info.addr.stat = COMP_DELTA_CHUNK;// 标记为全局增量块
+        uint32_t delta_size = delta_comp_->DeltaEncode(base_chunk,
+            base_addr.len, input_chunk->data, input_chunk->info.size,
+            delta_chunk);
+#ifdef EDR_BREAKDOWN
+        gettimeofday(&delta_etime, NULL);
+        _total_comp_delta_time += tool::GetTimeDiff(delta_stime, delta_etime);
+        _total_comp_delta_data_size += input_chunk->info.size;
+#endif
+        if (delta_size > 0 && delta_size < best_delta_size) {
+            best_delta_size = delta_size;
+            result.base_fp = candidate;
+            result.size = delta_size;
+            result.data.assign(delta_chunk, delta_chunk + delta_size);
+        }
+    }
 
-    // update stat
-    _total_delta_size += delta_chunk_size;// 增加全局增量数据大小
-    double similarity = 1.0 - (double)delta_chunk_size / (double)input_chunk->info.size;
+    for (const auto& candidate : invalid_candidates) {
+        this->PruneCompressedCandidate(input_chunk->info.features, candidate);
+    }
+
+    return !result.base_fp.empty();
+}
+
+void DataWriterThd::WriteCompressedDelta(WrappedChunk_t* input_chunk,
+    CompressedDeltaResult& result, ClientVar* cur_client) {
+    memcpy(input_chunk->info.addr.base_fp, result.base_fp.data(),
+        CHUNK_HASH_SIZE);
+    storage_core_->WriteChunk(&input_chunk->info.addr, result.data.data(),
+        result.size, cur_client);
+    input_chunk->info.addr.stat = COMP_DELTA_CHUNK;
+}
+
+void DataWriterThd::RecordGlobalDelta(uint32_t input_size,
+    uint32_t delta_size) {
+    double similarity = 1.0 - (double)delta_size / (double)input_size;
+    boost::mutex::scoped_lock lock(stat_lck_);
+    _total_similar_chunk_num++;
+    _total_similar_data_size += input_size;
+    _total_delta_size += delta_size;
     if (similarity < 0.4) _similarity_hist[0]++;
     else if (similarity < 0.5) _similarity_hist[1]++;
     else if (similarity < 0.6) _similarity_hist[2]++;
@@ -177,19 +247,106 @@ void DataWriterThd::ProcSimilarChunk(WrappedChunk_t* input_chunk,
     else if (similarity < 0.8) _similarity_hist[4]++;
     else if (similarity < 0.9) _similarity_hist[5]++;
     else _similarity_hist[6]++;
+}
 
-#ifdef EDR_BREAKDOWN
-    gettimeofday(&_comp_delta_etime, NULL);
-    _total_comp_delta_time += tool::GetTimeDiff(_comp_delta_stime,
-        _comp_delta_etime);
-    _total_comp_delta_data_size += input_chunk->info.size;
-#endif
+bool DataWriterThd::ProcCompressedSimilarChunk(WrappedChunk_t* input_chunk,
+    ClientVar* cur_client) {
+    CompressedDeltaResult result;
+    if (!FindBestCompressedDelta(input_chunk, cur_client, result)) {
+        return false;
+    }
+    double similarity = 1.0 - (double)result.size /
+        (double)input_chunk->info.size;
+    if (similarity < SIMILARITY_THRESHOLD) return false;
 
-    return ;
+    WriteCompressedDelta(input_chunk, result, cur_client);
+    RecordGlobalDelta(input_chunk->info.size, result.size);
+    return true;
+}
+
+bool DataWriterThd::ProcDeferredComparison(WrappedChunk_t* input_chunk,
+    ClientVar* cur_client) {
+    string fp_key((char*)input_chunk->info.compressed_fp, CHUNK_HASH_SIZE);
+    WrappedChunk_t local_delta;
+    bool found_local = false;
+    {
+        lock_guard<mutex> lock(cur_client->_recompress_map_lck);
+        auto it = cur_client->_pending_local_delta_map.find(fp_key);
+        if (it != cur_client->_pending_local_delta_map.end()) {
+            local_delta = it->second;
+            cur_client->_pending_local_delta_map.erase(it);
+            found_local = true;
+        }
+    }
+
+    if (!found_local) {
+        // A malformed or duplicate response must never produce an orphan
+        // Delta. The compressed payload is independently recoverable.
+        ProcNonSimilarChunk(input_chunk, cur_client);
+        return true;
+    }
+
+    CompressedDeltaResult compressed_delta;
+    bool has_compressed_delta = FindBestCompressedDelta(input_chunk,
+        cur_client, compressed_delta);
+
+    enum Choice { LOCAL_DELTA, FULL_COMPRESSED, COMPRESSED_DELTA };
+    Choice choice = LOCAL_DELTA;
+    uint32_t selected_size = local_delta.info.size;
+    if (input_chunk->info.size < selected_size) {
+        choice = FULL_COMPRESSED;
+        selected_size = input_chunk->info.size;
+    }
+    if (has_compressed_delta && compressed_delta.size < selected_size) {
+        choice = COMPRESSED_DELTA;
+        selected_size = compressed_delta.size;
+    }
+
+    {
+        boost::mutex::scoped_lock lock(stat_lck_);
+        deferred_compare_num_++;
+        if (local_delta.info.size > selected_size) {
+            deferred_saved_vs_local_ += local_delta.info.size - selected_size;
+        }
+        if (choice == LOCAL_DELTA) deferred_choose_local_num_++;
+        else if (choice == FULL_COMPRESSED) deferred_choose_full_num_++;
+        else deferred_choose_comp_delta_num_++;
+    }
+
+    if (choice == LOCAL_DELTA) {
+        local_delta.info.stat = CACHE_DELTA_CHUNK;
+        ProcCacheDeltaChunk(&local_delta, cur_client);
+        input_chunk->info.addr = local_delta.info.addr;
+        cache_comp_thd_->RecordDeferredLocal(local_delta.info.logical_size,
+            local_delta.info.size);
+        return false;
+    }
+
+    cache_comp_thd_->RecordDeferredReject();
+    if (choice == COMPRESSED_DELTA) {
+        WriteCompressedDelta(input_chunk, compressed_delta, cur_client);
+        RecordGlobalDelta(input_chunk->info.size, compressed_delta.size);
+        return false;
+    }
+
+    ProcNonSimilarChunk(input_chunk, cur_client);
+    return true;
+}
+
+void DataWriterThd::PruneCompressedCandidate(uint64_t* features,
+    const string& base_fp) {
+    boost::mutex::scoped_lock lock(compressed_index_lck_);
+    for (size_t i = 0; i < SUPER_FEATURE_PER_CHUNK; i++) {
+        if (similar_policy_->FeatureContainsBase(compressed_feature_2_fp_db_,
+            features[i], base_fp)) {
+            similar_policy_->RemoveFeatureIndex(compressed_feature_2_fp_db_,
+                features[i], base_fp);
+        }
+    }
 }
 
 /**
- * @brief process a non-similar chunk 
+ * @brief process a non-similar chunk
  * 
  * @param input_chunk input chunk
  * @param cur_client current client
@@ -217,33 +374,3 @@ void DataWriterThd::ProcCacheDeltaChunk(WrappedChunk_t* input_chunk,
     return ;
 }
 
-/**
- * @brief fetch the base chunk
- * 
- * @param base_fp base chunk fp
- * @param base_data base chunk data
- * @param cur_client current client
- * @return uint32_t base chunk size
- */
-uint32_t DataWriterThd::FetchBaseChunk(uint8_t* base_fp, uint8_t* base_data,
-    ClientVar* cur_client) {
-    string base_addr_str;
-
-    // step-1: query the fp index to get the base chunk address  查询 fp 索引以获取基块地址
-    // 查询基准块地址
-    if (!fp_2_addr_db_->QueryBuffer((char*)base_fp, CHUNK_HASH_SIZE, base_addr_str)) {
-        tool::Logging(my_name_.c_str(), "req base chunk not exits.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // step-2: read base chunk from the disk    从磁盘读取基本块
-    // 读取基准块数据
-    KeyForChunkHashDB_t* base_addr = (KeyForChunkHashDB_t*)&base_addr_str[0];
-    bool read = storage_core_->ReadChunk(base_addr, base_data, cur_client);
-    
-    if(read == false){
-        return 0;
-    }
-
-    return base_addr->len;
-}

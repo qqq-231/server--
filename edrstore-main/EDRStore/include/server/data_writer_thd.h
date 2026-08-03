@@ -20,6 +20,8 @@
 #include "client_var.h"
 #include "storage_core.h"
 
+class CacheCompThd;
+
 class DataWriterThd {
     private:
         string my_name_ = "DataWriterThd";
@@ -29,25 +31,48 @@ class DataWriterThd {
 
         // for delta compression
         DeltaComp* delta_comp_;
-
-        // for similar detection
         SimilarPolicy* similar_policy_;
 
         // for fp to chunk addr index
         AbsDatabase* fp_2_addr_db_;
-        AbsDatabase* feature_2_fp_db_;
+        AbsDatabase* compressed_feature_2_fp_db_;
+        // All DataWriterThd instances share the same feature DB.  The update
+        // is a read-modify-write operation, so the lock must be process-wide.
+        static boost::mutex compressed_index_lck_;
+        boost::mutex stat_lck_;
+        CacheCompThd* cache_comp_thd_;
+
+        struct CompressedDeltaResult {
+            string base_fp;
+            uint32_t size = 0;
+            vector<uint8_t> data;
+        };
+
+        uint64_t deferred_compare_num_ = 0;
+        uint64_t deferred_choose_local_num_ = 0;
+        uint64_t deferred_choose_full_num_ = 0;
+        uint64_t deferred_choose_comp_delta_num_ = 0;
+        uint64_t deferred_saved_vs_local_ = 0;
+
+        bool FindBestCompressedDelta(WrappedChunk_t* input_chunk,
+            ClientVar* cur_client, CompressedDeltaResult& result);
+        void WriteCompressedDelta(WrappedChunk_t* input_chunk,
+            CompressedDeltaResult& result, ClientVar* cur_client);
+        bool ProcDeferredComparison(WrappedChunk_t* input_chunk,
+            ClientVar* cur_client);
+        void RecordGlobalDelta(uint32_t input_size, uint32_t delta_size);
+
+        /** Try a one-level delta in the compressed-ciphertext domain. */
+        bool ProcCompressedSimilarChunk(WrappedChunk_t* input_chunk,
+            ClientVar* cur_client);
+
+        /** Remove an invalid candidate from the buckets hit by this chunk. */
+        void PruneCompressedCandidate(uint64_t* features,
+            const string& base_fp);
 
         /**
-         * @brief process a similar chunk
-         * 
-         * @param input_chunk input chunk
-         * @param cur_client current client
-         */
-        void ProcSimilarChunk(WrappedChunk_t* input_chunk, ClientVar* cur_client);
-
-        /**
-         * @brief process a non-similar chunk 
-         * 
+         * @brief process a non-similar chunk
+         *
          * @param input_chunk input chunk
          * @param cur_client current client
          */
@@ -55,22 +80,11 @@ class DataWriterThd {
 
         /**
          * @brief process a cache delta chunk
-         * 
+         *
          * @param input_chunk input chunk
          * @param cur_client current client
          */
         void ProcCacheDeltaChunk(WrappedChunk_t* input_chunk, ClientVar* cur_client);
-
-        /**
-         * @brief fetch the base chunk
-         * 
-         * @param base_fp base chunk fp
-         * @param base_data base chunk data
-         * @param cur_client current client
-         * @return uint32_t base chunk size
-         */
-        uint32_t FetchBaseChunk(uint8_t* base_fp, uint8_t* base_data,
-            ClientVar* cur_client);
 
     public:
         // for delta compression
@@ -90,11 +104,12 @@ class DataWriterThd {
          * @brief Construct a new DataWriterThd object
          * 
          * @param fp_2_addr_db fp to chunk addr index
-         * @param feature_2_fp_db feature to fp index
+         * @param compressed_feature_2_fp_db compressed ciphertext feature index
          * @param storage_core storage core
          */
-        DataWriterThd(AbsDatabase* fp_2_addr_db, AbsDatabase* feature_2_fp_db,
-            StorageCore* storage_core);
+        DataWriterThd(AbsDatabase* fp_2_addr_db,
+            AbsDatabase* compressed_feature_2_fp_db, StorageCore* storage_core,
+            CacheCompThd* cache_comp_thd);
 
         /**
          * @brief Destroy the DataWriterThd object

@@ -72,11 +72,11 @@ class ClientVar {
 
         // common container cache
         ReadCache* _container_cache;
-        InformCache* _inform_cache;
 
         // upload var
         Container_t _cur_container;
         RabinCtx_t _rabin_ctx;
+        RabinCtx_t _recompress_rabin_ctx;
         SendMsgBuffer_t _recv_chunk_buf;
         BatchBuf_t _recipe_batch;
         // AbsMQ<WrappedChunk_t>* _recv_2_comp_mq;
@@ -84,6 +84,14 @@ class ClientVar {
         AbsMQ<WrappedChunk_t>* _recv_2_dual_mq;
         AbsMQ<WrappedChunk_t>* _dual_2_comp_mq;
         AbsMQ<WrappedChunk_t>* _comp_2_writer_mq;
+        AbsMQ<WrappedChunk_t>* _recompress_mq;
+
+        // pending recompress map
+        unordered_map<string, WrappedChunk_t> _pending_recompress_map;
+        // Recompress responses and tentative local Deltas use different
+        // queues. Keep the Delta alive until DataWriter makes the final choice.
+        unordered_map<string, WrappedChunk_t> _pending_local_delta_map;
+        mutex _recompress_map_lck;
 
         // download var
         SendMsgBuffer_t _send_chunk_buf;
@@ -93,8 +101,6 @@ class ClientVar {
         SSL* _client_ssl; // SSL connection
 
         uint64_t _start_chunk_idx; // 断点续传起始chunk索引
-
-        uint64_t* _total_cache_size;
 
         /**
          * @brief Construct a new Client Var object

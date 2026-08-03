@@ -91,6 +91,16 @@ void DataRecvThd::Run(ClientVar* cur_client) {
                     this->ProcessEvictFeature(cur_client);
                     break;
                 }
+                case CLIENT_UPLOAD_COMPLETE: {
+                    // all upload data received, unblock downstream pipeline
+                    // DataRecvThd stays alive for recompress responses
+                    cur_client->_recv_2_dual_mq->_done = true;
+                    break;
+                }
+                case CLIENT_RESEND_COMPRESSED: {
+                    this->ProcessRecompressResponse(cur_client);
+                    break;
+                }
                 default: {
                     tool::Logging(my_name_.c_str(), "wrong recv data type.\n");
                     exit(EXIT_FAILURE);
@@ -101,6 +111,11 @@ void DataRecvThd::Run(ClientVar* cur_client) {
         }
     }
 
+recv_done:
+    // drain any remaining pending recompress chunks (fallback to original data)
+    this->DrainPendingRecompress(cur_client);
+    cur_client->_recompress_mq->_done = true;
+    cur_client->_comp_2_writer_mq->_done = true;
     cur_client->_recv_2_dual_mq->_done = true;
     gettimeofday(&etime, NULL);
     total_running_time += tool::GetTimeDiff(stime, etime);
@@ -229,6 +244,9 @@ void DataRecvThd::ProcessChunks(ClientVar* cur_client) {
                 // it is a normal chunk  // 这是一个普通的块
                 tmp_chunk.info.size = chunk_header_ptr->size;
                 memcpy(dual_fp_buf + CHUNK_HASH_SIZE, chunk_header_ptr->compressed_fp,
+                    CHUNK_HASH_SIZE);
+                // save compressed_fp for potential recompress request
+                memcpy(tmp_chunk.info.compressed_fp, chunk_header_ptr->compressed_fp,
                     CHUNK_HASH_SIZE);
 
 #ifdef EDR_BREAKDOWN
@@ -447,5 +465,86 @@ void DataRecvThd::ProcessEvictFeature(ClientVar* cur_client) {
         output_MQ->Push(tmp_feature_chunk);
     }
 
+    return ;
+}
+
+/**
+ * @brief process a recompress response from the client
+ *
+ * @param cur_client current client
+ */
+void DataRecvThd::ProcessRecompressResponse(ClientVar* cur_client) {
+    SendMsgBuffer_t* recv_chunk_buf = &cur_client->_recv_chunk_buf;
+    AbsMQ<WrappedChunk_t>* output_MQ = cur_client->_comp_2_writer_mq;
+    uint32_t resp_count = recv_chunk_buf->header->cur_item_num;
+    uint8_t* data_ptr = recv_chunk_buf->data_buf;
+
+    for (uint32_t i = 0; i < resp_count; i++) {
+        RecompressResponse_t* response = (RecompressResponse_t*) data_ptr;
+        data_ptr += sizeof(RecompressResponse_t);
+
+        string fp_key((char*)response->compressed_fp, CHUNK_HASH_SIZE);
+        WrappedChunk_t orig_chunk;
+        bool found = false;
+        bool compare_local_delta = false;
+        {
+            lock_guard<mutex> lck(cur_client->_recompress_map_lck);
+            auto it = cur_client->_pending_recompress_map.find(fp_key);
+            if (it != cur_client->_pending_recompress_map.end()) {
+                orig_chunk = it->second;
+                compare_local_delta =
+                    orig_chunk.info.stat == PENDING_LOCAL_DELTA_CHUNK;
+                cur_client->_pending_recompress_map.erase(it);
+                if (compare_local_delta) {
+                    cur_client->_pending_local_delta_map[fp_key] = orig_chunk;
+                }
+                found = true;
+            }
+        }
+
+        if (found) {
+            // replace data with encrypted-compressed version
+            memcpy(orig_chunk.data, response->enc_comp_data,
+                response->enc_comp_size);
+            orig_chunk.info.size = response->enc_comp_size;
+            if (compare_local_delta) {
+                // Features in the pending object belong to uncompressed
+                // ciphertext. Recompute them for the compressed domain using
+                // an independent Rabin context.
+                finesse_util_->ExtractFeature(
+                    cur_client->_recompress_rabin_ctx, orig_chunk.data,
+                    orig_chunk.info.size, orig_chunk.info.features);
+                orig_chunk.info.stat = COMPARE_RECOMPRESS_CHUNK;
+            } else {
+                orig_chunk.info.stat = UNIQUE_CHUNK;
+            }
+            output_MQ->Push(orig_chunk);
+        }
+    }
+    return ;
+}
+
+/**
+ * @brief drain pending recompress chunks (fallback to original data)
+ *
+ * @param cur_client current client
+ */
+void DataRecvThd::DrainPendingRecompress(ClientVar* cur_client) {
+    AbsMQ<WrappedChunk_t>* output_MQ = cur_client->_comp_2_writer_mq;
+    {
+        lock_guard<mutex> lck(cur_client->_recompress_map_lck);
+        for (auto& it : cur_client->_pending_recompress_map) {
+            if (it.second.info.stat == PENDING_LOCAL_DELTA_CHUNK) {
+                // The client did not return a compressed representation. The
+                // tentative local Delta is complete and safe to write.
+                it.second.info.stat = DEFERRED_LOCAL_DELTA_CHUNK;
+            } else {
+                // Uncompressed encrypted data → decrypt-only fallback.
+                it.second.info.stat = UNCOMP_BASE_CHUNK;
+            }
+            output_MQ->Push(it.second);
+        }
+        cur_client->_pending_recompress_map.clear();
+    }
     return ;
 }

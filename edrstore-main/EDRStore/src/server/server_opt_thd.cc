@@ -19,10 +19,12 @@
  * @param feature_2_fp_db the feature to base hash index
  */
 ServerOptThd::ServerOptThd(SSLConnection* server_channel, 
-    AbsDatabase* fp_2_addr_db, AbsDatabase* feature_2_fp_db) {
+    AbsDatabase* fp_2_addr_db, AbsDatabase* feature_2_fp_db,
+    AbsDatabase* compressed_feature_2_fp_db) {
     server_channel_ = server_channel;
     fp_2_addr_db_ = fp_2_addr_db;
     feature_2_fp_db_ = feature_2_fp_db;
+    compressed_feature_2_fp_db_ = compressed_feature_2_fp_db;
 
     // init the upload
     storage_core_ = new StorageCore();
@@ -30,9 +32,10 @@ ServerOptThd::ServerOptThd(SSLConnection* server_channel,
     data_recv_thd_ = new DataRecvThd(server_channel_, fp_2_addr_db_);
     cache_comp_thd_ = new CacheCompThd();
     data_writer_thd_ = new DataWriterThd(fp_2_addr_db_,
-        feature_2_fp_db_, storage_core_);
-    dual_dedup_thd_ = new DualDedupThd(fp_2_addr_db_); 
-    
+        compressed_feature_2_fp_db_, storage_core_, cache_comp_thd_);
+    dual_dedup_thd_ = new DualDedupThd(fp_2_addr_db_);
+    recompress_handler_thd_ = new RecompressHandlerThd(server_channel_);
+
     data_reader_thd_ = new DataReaderThd(fp_2_addr_db_, storage_core_);
     data_decode_thd_ = new DataDecoderThd(server_channel_);
     
@@ -45,19 +48,6 @@ ServerOptThd::ServerOptThd(SSLConnection* server_channel,
  */
 ServerOptThd::~ServerOptThd() {
     this->StoreStat();
-    delete storage_core_;
-
-    delete data_recv_thd_;
-    delete cache_comp_thd_;
-    delete data_writer_thd_;
-    delete dual_dedup_thd_;
-
-    delete data_reader_thd_;
-    delete data_decode_thd_;
-
-    for (auto it : client_lck_idx_) {
-        delete it.second;
-    }
     fprintf(stderr, "========ServerOptThd Info========\n");
     fprintf(stderr, "total recv upload req: %lu\n", 
         _total_upload_opt_num);
@@ -100,6 +90,21 @@ ServerOptThd::~ServerOptThd() {
         data_writer_thd_->_total_similar_chunk_num,
         cache_comp_thd_->_total_similar_chunk_num + data_writer_thd_->_total_similar_chunk_num);
     fprintf(stderr, "=================================\n");
+
+    // Reporting must happen before destroying the worker objects. Reading
+    // their counters after delete made experiment summaries undefined.
+    delete data_recv_thd_;
+    delete data_writer_thd_;
+    delete cache_comp_thd_;
+    delete dual_dedup_thd_;
+    delete recompress_handler_thd_;
+    delete data_reader_thd_;
+    delete data_decode_thd_;
+    delete storage_core_;
+
+    for (auto it : client_lck_idx_) {
+        delete it.second;
+    }
 }
 
 /**
@@ -218,6 +223,10 @@ void ServerOptThd::Run(SSL* client_ssl) {
             tmp_thd = new boost::thread(attrs, boost::bind(&CacheCompThd::Run,
                 cache_comp_thd_, cur_client));
             thd_list.push_back(tmp_thd);
+            tmp_thd = new boost::thread(attrs, boost::bind(
+                &RecompressHandlerThd::Run,
+                recompress_handler_thd_, cur_client));
+            thd_list.push_back(tmp_thd);
             tmp_thd = new boost::thread(attrs, boost::bind(&DataWriterThd::Run,
                 data_writer_thd_, cur_client));
             thd_list.push_back(tmp_thd);
@@ -300,10 +309,13 @@ void ServerOptThd::Run(SSL* client_ssl) {
     thd_list.clear();
 
     // clean up client variables
-    uint64_t total_cache_size = 0;
-    cur_client->_total_cache_size = &total_cache_size;
     delete cur_client;
     if (opt_type == UPLOAD_OPT) {
+        InformCache cache_for_log;
+        // Reclaim bases whose last exact client/feature reference expired.
+        // This also performs the one-time cleanup of legacy aggregate-only
+        // metadata after upgrading to exact association tracking.
+        uint64_t total_cache_size = cache_for_log.DeleteEvictChunk();
         this->PrintClientLog(total_cache_size);
     }
     free(recv_buf.send_buf);
@@ -452,6 +464,11 @@ void ServerOptThd::LoadStat() {
                 (char*)data_writer_thd_->_similarity_hist,
                 sizeof(uint64_t) * 7);
 
+            // for similarity reject count
+            prev_stat_file_hdl.read(
+                (char*)&cache_comp_thd_->_total_similarity_reject_num,
+                sizeof(uint64_t));
+
             // for total stored data
             prev_stat_file_hdl.read((char*)&storage_core_->_write_chunk_num,
                 sizeof(uint64_t));
@@ -521,6 +538,11 @@ void ServerOptThd::StoreStat() {
             (char*)data_writer_thd_->_similarity_hist,
             sizeof(uint64_t) * 7);
 
+        // for similarity reject count
+        prev_stat_file_hdl.write(
+            (char*)&cache_comp_thd_->_total_similarity_reject_num,
+            sizeof(uint64_t));
+
         // for total stored data
         prev_stat_file_hdl.write((char*)&storage_core_->_write_chunk_num,
             sizeof(uint64_t));
@@ -552,19 +574,21 @@ void ServerOptThd::PrintClientLog(uint64_t total_cache_size) {
                 << "similar size (l), " << "similar chunk num (l), "
                 << "delta size (l), " << "similar size (g), "
                 << "similar chunk num (g), " << "delta size (g), "
-                << "storage size, cache size" << endl;
+                << "storage size, " << "similarity reject num, "
+                << "cache size" << endl;
         }
-        server_log_hdl << data_recv_thd_->_total_logical_data_size << ", " 
+        server_log_hdl << data_recv_thd_->_total_logical_data_size << ", "
             << data_recv_thd_->_total_logical_chunk_num << ", "
-            << dual_dedup_thd_->_total_unique_data_size << ", " 
-            << dual_dedup_thd_->_total_unique_chunk_num << ", " 
-            << cache_comp_thd_->_total_similar_data_size << ", " 
-            << cache_comp_thd_->_total_similar_chunk_num << ", " 
-            << cache_comp_thd_->_total_delta_size << ", " 
-            << data_writer_thd_->_total_similar_data_size << ", " 
-            << data_writer_thd_->_total_similar_chunk_num << ", " 
-            << data_writer_thd_->_total_delta_size << ", " 
-            << storage_core_->_write_data_size << ", " 
+            << dual_dedup_thd_->_total_unique_data_size << ", "
+            << dual_dedup_thd_->_total_unique_chunk_num << ", "
+            << cache_comp_thd_->_total_similar_data_size << ", "
+            << cache_comp_thd_->_total_similar_chunk_num << ", "
+            << cache_comp_thd_->_total_delta_size << ", "
+            << data_writer_thd_->_total_similar_data_size << ", "
+            << data_writer_thd_->_total_similar_chunk_num << ", "
+            << data_writer_thd_->_total_delta_size << ", "
+            << storage_core_->_write_data_size << ", "
+            << cache_comp_thd_->_total_similarity_reject_num << ", "
             << total_cache_size << endl;
         server_log_hdl.close();
     }

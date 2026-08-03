@@ -45,10 +45,12 @@ class DataDecoderThd {
 
         /**
          * @brief send a batch of chunk
-         * 
-         * @param cur_client current client 
+         *
+         * @param cur_client current client
+         * @return true success
+         * @return false fail (client disconnected)
          */
-        void SendChunks(ClientVar* cur_client);
+        bool SendChunks(ClientVar* cur_client);
 
         /**
          * @brief send the end flag 

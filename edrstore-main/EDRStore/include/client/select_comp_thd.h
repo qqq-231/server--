@@ -19,6 +19,9 @@
 #include "../data_structure.h"
 #include "../message_queue/mq_factory.h"
 
+#include <unordered_map>
+#include <list>
+
 class SelectCompThd {
     private:
         string my_name_ = "SelectCompThd";
@@ -28,6 +31,11 @@ class SelectCompThd {
 
         // compression padding
         CompPad* comp_pad_;
+
+        // plaintext buffer: compressed_fp -> {plaintext, key, seed}
+        unordered_map<string, PlaintextEntry_t> _plaintext_buffer;
+        list<string> _plaintext_order; // FIFO insertion order for eviction
+        static const size_t PLAINTEXT_BUFFER_MAX = 16384; // max entries before eviction
 
         // two-phase encryption
         TwoPhaseEnc* two_phase_enc_;
@@ -100,6 +108,31 @@ class SelectCompThd {
          */
         void Run(AbsMQ<EncFeatureChunk_t>* input_MQ,
             AbsMQ<SelectComp2Sender_t>* output_MQ);
+
+        /**
+         * @brief store plaintext in the buffer for potential recompress request
+         *
+         * @param compressed_fp the compressed fp as key
+         * @param input_chunk the input chunk with plaintext data
+         */
+        void StorePlaintext(uint8_t* compressed_fp, EncFeatureChunk_t* input_chunk);
+
+        /**
+         * @brief lookup plaintext from the buffer
+         *
+         * @param compressed_fp the compressed fp as key
+         * @param out_entry output plaintext entry
+         * @return true found
+         * @return false not found
+         */
+        bool LookupPlaintext(uint8_t* compressed_fp, PlaintextEntry_t* out_entry);
+
+        /**
+         * @brief get the comp pad pointer
+         *
+         * @return CompPad*
+         */
+        CompPad* GetCompPad() { return comp_pad_; }
 };
 
 #endif

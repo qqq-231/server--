@@ -5,18 +5,8 @@
 
 #include "../../include/chunker/gear_poly.h"
 #include "../../include/chunker/odess_util.h"
-#include"../../include/const_var.h"
-
-
-static uint32_t M[] = {
-    0x5b49898a, 0xe4f94e27, 0x95f658b2, 0x8f9c99fc, 0xeba8d4d8, 0xba2c8e92,
-    0xa868aeb4, 0xd767df82, 0x843606a4, 0xc1e70129, 0x32d9d1b0, 0xeb91e53c,
-};
-
-static uint32_t A[] = {
-    0xff4be8c,  0x6f485986, 0x12843ff,  0x5b47dc4d, 0x7faa9b8a, 0xd547b8ba,
-    0xf9979921, 0x4f5400da, 0x725f79a9, 0x3c9321ac, 0x32716d,   0x3f5adf5d,
-};
+#include "../../include/const_var.h"
+#include "../../include/MA.h"
 
 
 
@@ -106,26 +96,18 @@ void OdessUtil::ExtractFeature(GearCtx_t& ctx, uint8_t* data, uint32_t size,
 // }
 //
 
-    // ========== 改用 XXHash64 聚合（原 GEAR_TABLE 版注释保留在下方） ==========
-    for (int i = 0; i < super_feature_per_chunk_; i++) {
-        uint32_t base_idx = i * feature_per_super_feature_;
-        uint8_t* buf = (uint8_t*)(sub_features.data() + base_idx);
-        size_t len = sizeof(uint32_t) * feature_per_super_feature_;
-        features[i] = XXHash64::hash(buf, len, 0);
+
+    auto hash_buf = reinterpret_cast<const uint8_t*const>(sub_features.data());
+    for (int i = 0; i < super_feature_per_chunk_; i++) {  // 注意这里应该是 super_feature_per_chunk_
+        uint64_t hash_value = 0;
+        auto this_hash_buf = hash_buf + i * feature_per_super_feature_ * sizeof(uint32_t);
+        for (int j = 0; j < feature_per_super_feature_ * sizeof(uint32_t); j++) {
+            if (j < feature_per_chunk_ * sizeof(uint32_t)) {  // 边界检查
+                hash_value = (hash_value << 1) + GEAR_TABLE[this_hash_buf[j]];
+            }
+        }
+        features[i] = hash_value;
     }
-
-
-    // auto hash_buf = reinterpret_cast<const uint8_t*const>(sub_features.data());
-    // for (int i = 0; i < super_feature_per_chunk_; i++) {  // 注意这里应该是 super_feature_per_chunk_
-    //     uint64_t hash_value = 0;
-    //     auto this_hash_buf = hash_buf + i * feature_per_super_feature_ * sizeof(uint32_t);
-    //     for (int j = 0; j < feature_per_super_feature_ * sizeof(uint32_t); j++) {
-    //         if (j < feature_per_chunk_ * sizeof(uint32_t)) {  // 边界检查
-    //             hash_value = (hash_value << 1) + GEAR_TABLE[this_hash_buf[j]];
-    //         }
-    //     }
-    //     features[i] = hash_value;
-    // }
 
 
 

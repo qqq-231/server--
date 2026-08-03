@@ -33,7 +33,7 @@ DataRetrieverThd::DataRetrieverThd(SSLConnection* server_channel,
     server_ssl_ = server_conn_record.second;
 
     // recv chunk buffer
-    recv_chunk_buf_.send_buf = (uint8_t*) malloc(send_chunk_batch_size_ *
+    recv_chunk_buf_.send_buf = (uint8_t*) malloc(2 * send_chunk_batch_size_ *
         sizeof(SendChunk_t) + sizeof(NetworkHead_t));
     recv_chunk_buf_.header = (NetworkHead_t*) recv_chunk_buf_.send_buf;
     recv_chunk_buf_.header->client_id = client_id_;

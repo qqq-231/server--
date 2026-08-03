@@ -10,6 +10,7 @@
  */
 
 #include "../../include/client/sender_thd.h"
+#include "../../include/client/select_comp_thd.h"
 
 /**
  * @brief Construct a new SenderThd object
@@ -20,7 +21,8 @@
  * @param cache_meta cache meta 
  */
 SenderThd::SenderThd(SSLConnection* server_channel, pair<int, SSL*> server_conn_record,
-    uint8_t* file_name_hash, CacheMeta* cache_meta) {
+    uint8_t* file_name_hash, CacheMeta* cache_meta,
+    CompPad* comp_pad, SelectCompThd* select_comp_thd) {
     // for config
     send_chunk_batch_size_ = config.GetSendChunkBatchSize();
     send_recipe_batch_size_ = config.GetSendRecipeBatchSize();
@@ -33,7 +35,7 @@ SenderThd::SenderThd(SSLConnection* server_channel, pair<int, SSL*> server_conn_
     send_chunk_buf_.header->client_id = client_id_;
     send_chunk_buf_.header->size = 0;
     send_chunk_buf_.header->cur_item_num = 0;
-    send_chunk_buf_.data_buf = send_chunk_buf_.send_buf + sizeof(NetworkHead_t); 
+    send_chunk_buf_.data_buf = send_chunk_buf_.send_buf + sizeof(NetworkHead_t);
 
     // for storage server connection
     server_channel_ = server_channel;
@@ -62,6 +64,10 @@ SenderThd::SenderThd(SSLConnection* server_channel, pair<int, SSL*> server_conn_
 
     // for re-encryption
     two_phase_enc_ = new TwoPhaseEnc();
+
+    // for recompress
+    comp_pad_ = comp_pad;
+    select_comp_thd_ = select_comp_thd;
 
     // for cache meta
     cache_meta_ = cache_meta;
@@ -225,6 +231,51 @@ void SenderThd::Run(AbsMQ<SelectComp2Sender_t>* input_MQ) {
                     _cur_version_idx_size = cache_meta_->GetFeatureNum() * (sizeof(uint64_t) +
                         sizeof(uint32_t));
 
+                    // signal the server that all upload data has been sent
+                    SendMsgBuffer_t upload_complete_buf;
+                    upload_complete_buf.send_buf = (uint8_t*) malloc(
+                        sizeof(NetworkHead_t));
+                    upload_complete_buf.header = (NetworkHead_t*)
+                        upload_complete_buf.send_buf;
+                    upload_complete_buf.header->msg_type =
+                        CLIENT_UPLOAD_COMPLETE;
+                    upload_complete_buf.header->client_id = client_id_;
+                    upload_complete_buf.header->cur_item_num = 0;
+                    upload_complete_buf.header->size = 0;
+                    server_channel_->SendData(server_ssl_,
+                        upload_complete_buf.send_buf, sizeof(NetworkHead_t));
+                    free(upload_complete_buf.send_buf);
+
+                    // handle recompress requests from the server
+                    if (select_comp_thd_ != nullptr) {
+                        SendMsgBuffer_t recv_control_buf;
+                        recv_control_buf.send_buf = (uint8_t*) malloc(
+                            sizeof(NetworkHead_t) + ENC_MAX_CHUNK_SIZE);
+                        recv_control_buf.header = (NetworkHead_t*) recv_control_buf.send_buf;
+                        recv_control_buf.data_buf = recv_control_buf.send_buf +
+                            sizeof(NetworkHead_t);
+                        uint32_t recv_control_size = 0;
+
+                        while (true) {
+                            if (!server_channel_->ReceiveData(server_ssl_,
+                                recv_control_buf.send_buf, recv_control_size)) {
+                                break;
+                            }
+                            switch (recv_control_buf.header->msg_type) {
+                                case SERVER_REQ_RECOMPRESS: {
+                                    this->HandleRecompressRequest(server_ssl_,
+                                        &recv_control_buf);
+                                    break;
+                                }
+                                default: {
+                                    goto recompress_done;
+                                }
+                            }
+                        }
+                    recompress_done:
+                        free(recv_control_buf.send_buf);
+                    }
+
                     // close the connection
                     server_channel_->Finish(server_conn_record_);
                     break;
@@ -364,4 +415,70 @@ bool SenderThd::UploadLogin(uint8_t* file_name_hash) {
 
     free(login_buf.send_buf);
     return true;
+}
+
+/**
+ * @brief handle a recompress request from the server
+ *
+ * @param ssl the SSL connection
+ * @param recv_buf the received buffer
+ */
+void SenderThd::HandleRecompressRequest(SSL* ssl,
+    SendMsgBuffer_t* recv_buf) {
+    uint32_t fp_count = recv_buf->header->cur_item_num;
+    uint8_t* fp_list = recv_buf->data_buf;
+    uint32_t processed = 0;
+
+    for (uint32_t i = 0; i < fp_count; i++) {
+        uint8_t* compressed_fp = fp_list + i * CHUNK_HASH_SIZE;
+        PlaintextEntry_t entry;
+        if (select_comp_thd_->LookupPlaintext(compressed_fp, &entry)) {
+            this->SendRecompressResponse(ssl, compressed_fp, &entry);
+            processed++;
+        }
+    }
+
+    tool::Logging(my_name_.c_str(), "handled recompress request: %u/%u found.\n",
+        processed, fp_count);
+    return ;
+}
+
+/**
+ * @brief send a recompress response for a single chunk
+ *
+ * @param ssl the SSL connection
+ * @param compressed_fp the compressed fp of the chunk
+ * @param entry the plaintext entry
+ */
+void SenderThd::SendRecompressResponse(SSL* ssl,
+    uint8_t* compressed_fp, PlaintextEntry_t* entry) {
+    uint8_t compressed_data[ENC_MAX_CHUNK_SIZE];
+    uint8_t enc_data[ENC_MAX_CHUNK_SIZE];
+
+    // compress
+    uint64_t compressed_size = comp_pad_->CompressWithPad(
+        entry->plaintext, entry->plaintext_size, compressed_data, entry->seed);
+
+    // encrypt
+    uint64_t enc_size = two_phase_enc_->TwoPhaseEncChunk(
+        compressed_data, compressed_size, entry->key, enc_data);
+
+    // build response message
+    size_t msg_size = sizeof(NetworkHead_t) + sizeof(RecompressResponse_t);
+    uint8_t* send_buf = (uint8_t*) malloc(msg_size);
+    NetworkHead_t* header = (NetworkHead_t*) send_buf;
+    header->msg_type = CLIENT_RESEND_COMPRESSED;
+    header->client_id = client_id_;
+    header->cur_item_num = 1;
+    header->size = sizeof(RecompressResponse_t);
+
+    RecompressResponse_t* response =
+        (RecompressResponse_t*)(send_buf + sizeof(NetworkHead_t));
+    memcpy(response->compressed_fp, compressed_fp, CHUNK_HASH_SIZE);
+    response->enc_comp_size = enc_size;
+    memcpy(response->enc_comp_data, enc_data, enc_size);
+
+    server_channel_->SendData(ssl, send_buf, msg_size);
+    free(send_buf);
+    return ;
 }

@@ -19,6 +19,7 @@
 #include "../server/cache_comp_thd.h"
 #include "../server/data_writer_thd.h"
 #include "../server/dual_dedup_thd.h"
+#include "../server/recompress_handler_thd.h"
 
 // for download
 #include "../server/data_reader_thd.h"
@@ -52,8 +53,9 @@ class ServerOptThd {
         // for upload thread
         DataRecvThd* data_recv_thd_;
         CacheCompThd* cache_comp_thd_; 
-        DataWriterThd* data_writer_thd_; 
+        DataWriterThd* data_writer_thd_;
         DualDedupThd* dual_dedup_thd_;
+        RecompressHandlerThd* recompress_handler_thd_;
 
         // for download thread
         DataDecoderThd* data_decode_thd_;
@@ -62,6 +64,7 @@ class ServerOptThd {
         // for index
         AbsDatabase* fp_2_addr_db_;
         AbsDatabase* feature_2_fp_db_;
+        AbsDatabase* compressed_feature_2_fp_db_;
 
         // locks for multiple clients
         unordered_map<int, boost::mutex*> client_lck_idx_;
@@ -121,8 +124,9 @@ class ServerOptThd {
          * @param fp_2_addr_db the fp to address index
          * @param feature_2_fp_db the feature to base hash index
          */
-        ServerOptThd(SSLConnection* server_channel, AbsDatabase* fp_2_addr_db, 
-            AbsDatabase* feature_2_fp_db);
+        ServerOptThd(SSLConnection* server_channel, AbsDatabase* fp_2_addr_db,
+            AbsDatabase* feature_2_fp_db,
+            AbsDatabase* compressed_feature_2_fp_db);
 
         /**
          * @brief Destroy the ServerOptThd object

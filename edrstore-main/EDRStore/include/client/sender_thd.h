@@ -17,9 +17,12 @@
 #include "../data_structure.h"
 #include "../message_queue/mq_factory.h"
 #include "two_phase_enc.h"
+#include "comp_pad.h"
 #include "cache_meta.h"
 
 extern Configure config;
+
+class SelectCompThd;
 
 class SenderThd {
     private:
@@ -48,6 +51,12 @@ class SenderThd {
         // for re-encryption
         TwoPhaseEnc* two_phase_enc_;
 
+        // for compression (recompress responses)
+        CompPad* comp_pad_;
+
+        // for plaintext buffer access
+        SelectCompThd* select_comp_thd_;
+
         // cache meta
         CacheMeta* cache_meta_;
         
@@ -66,10 +75,28 @@ class SenderThd {
 
         /**
          * @brief storage the key recipe
-         * 
+         *
          * @param key_recipe the ptr to the key recipe
          */
-        void StoreKeyRecipe(KeyRecipe_t* key_recipe); 
+        void StoreKeyRecipe(KeyRecipe_t* key_recipe);
+
+        /**
+         * @brief handle a recompress request from the server
+         *
+         * @param ssl the SSL connection
+         * @param recv_buf the received buffer
+         */
+        void HandleRecompressRequest(SSL* ssl, SendMsgBuffer_t* recv_buf);
+
+        /**
+         * @brief send a recompress response for a single chunk
+         *
+         * @param ssl the SSL connection
+         * @param compressed_fp the compressed fp of the chunk
+         * @param entry the plaintext entry
+         */
+        void SendRecompressResponse(SSL* ssl, uint8_t* compressed_fp,
+            PlaintextEntry_t* entry); 
     
     public:
         uint64_t _total_send_data_size = 0;
@@ -84,7 +111,8 @@ class SenderThd {
          * @param cache_meta cache meta 
          */
         SenderThd(SSLConnection* server_channel, pair<int, SSL*> server_conn_record,
-            uint8_t* file_name_hash, CacheMeta* cache_meta);
+            uint8_t* file_name_hash, CacheMeta* cache_meta,
+            CompPad* comp_pad = nullptr, SelectCompThd* select_comp_thd = nullptr);
 
         /**
          * @brief Destroy the SenderThd object

@@ -50,7 +50,19 @@ void Configure::ReadConfig(string path) {
     avg_chunk_size_ = root.get<uint64_t>("Chunker.avg_chunk_size");
     chunker_sliding_win_size_ = root.get<uint64_t>("Chunker.sliding_win_size");
     read_size_ = root.get<uint64_t>("Chunker.read_size");
-    mask = std::stoull(root.get<string>("Chunker.mask"), nullptr, 0);
+
+    string mask_text = root.get<string>("Chunker.mask", "0x00FF");
+    try {
+        size_t parsed_length = 0;
+        mask = std::stoull(mask_text, &parsed_length, 0);
+        if (parsed_length != mask_text.size() || mask == 0) {
+            throw std::invalid_argument("mask must be a non-zero integer");
+        }
+    } catch (const std::exception& error) {
+        tool::Logging(my_name_.c_str(), "invalid Chunker.mask '%s': %s\n",
+            mask_text.c_str(), error.what());
+        exit(EXIT_FAILURE);
+    }
 
 
 //=====
@@ -72,6 +84,9 @@ void Configure::ReadConfig(string path) {
     cache_root_path_ = root.get<string>("StorageServer.cache_root_path");
     fp_2_chunk_db_ = root.get<string>("StorageServer.fp_2_chunk_db");
     feature_2_fp_db_ = root.get<string>("StorageServer.feature_2_fp_db");
+    compressed_feature_2_fp_db_ = root.get<string>(
+        "StorageServer.compressed_feature_2_fp_db",
+        feature_2_fp_db_ + "_compressed");
     container_cache_size_ = root.get<uint64_t>("StorageServer.container_cache_size");
 
     // key manager settings

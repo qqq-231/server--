@@ -34,7 +34,7 @@ class Configure {
         uint64_t avg_chunk_size_;     // 平均块大小
         uint64_t chunker_sliding_win_size_;// 滑动窗口大小
         uint64_t read_size_; //128M per time   // 文件读取粒度 (默认128MB)
-        uint64_t mask;
+        uint64_t mask = 0x00FF;
 
 
 
@@ -49,6 +49,7 @@ class Configure {
         string cache_root_path_; // 缓存路径
         string fp_2_chunk_db_; // 指纹->块数据库名
         string feature_2_fp_db_;// 特征->指纹数据库名
+        string compressed_feature_2_fp_db_; // 压缩密文特征->指纹数据库名
         uint64_t container_cache_size_;// 容器缓存大小
 
         string feature_1;
@@ -154,6 +155,9 @@ class Configure {
         }
         string GetFeature2FpDBName() {
             return feature_2_fp_db_;
+        }
+        string GetCompressedFeature2FpDBName() {
+            return compressed_feature_2_fp_db_;
         }
         uint64_t GetContainerCacheSize() {
             return container_cache_size_;

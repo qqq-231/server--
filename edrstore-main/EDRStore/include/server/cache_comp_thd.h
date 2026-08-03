@@ -18,6 +18,8 @@
 class CacheCompThd {
     private:
         string my_name_ = "CacheCompThd";
+        InformCache inform_cache_;  // 全局共享架构：轻量级实例（数据在静态成员中）
+        boost::mutex stat_lck_;
 
     public:
         // for delta compression
@@ -25,6 +27,10 @@ class CacheCompThd {
         uint64_t _total_similar_data_size = 0;
         uint64_t _total_delta_size = 0;
         uint64_t _similarity_hist[7] = {0};
+        uint64_t _total_similarity_reject_num = 0;
+
+        void RecordDeferredLocal(uint32_t logical_size, uint32_t delta_size);
+        void RecordDeferredReject();
 
 #ifdef EDR_BREAKDOWN
         struct timeval _cache_manage_stime;

@@ -240,8 +240,12 @@ bool SelectCompThd::FullEDR(EncFeatureChunk_t* input_chunk,
                     enc_data
                 );
 
-                crypto_util_->GenerateHash(md_ctx, enc_data, enc_size, 
+                crypto_util_->GenerateHash(md_ctx, enc_data, enc_size,
                     output_chunk->send_chunk.header.compressed_fp);
+
+                // store plaintext for potential recompress request
+                this->StorePlaintext(output_chunk->send_chunk.header.compressed_fp,
+                    input_chunk);
 
                 // update the key recipe
                 memcpy(output_chunk->key_recipe.key, input_chunk->key,
@@ -314,4 +318,48 @@ bool SelectCompThd::FullEDR(EncFeatureChunk_t* input_chunk,
     }
 
     return ret;
+}
+
+/**
+ * @brief store plaintext in the buffer for potential recompress request
+ *
+ * @param compressed_fp the compressed fp as key
+ * @param input_chunk the input chunk with plaintext data
+ */
+void SelectCompThd::StorePlaintext(uint8_t* compressed_fp,
+    EncFeatureChunk_t* input_chunk) {
+    string fp_key((char*)compressed_fp, CHUNK_HASH_SIZE);
+    PlaintextEntry_t entry;
+    memcpy(entry.plaintext, input_chunk->feature_chunk.chunk.raw_chunk.data,
+        input_chunk->feature_chunk.chunk.raw_chunk.size);
+    entry.plaintext_size = input_chunk->feature_chunk.chunk.raw_chunk.size;
+    memcpy(entry.key, input_chunk->key, CHUNK_HASH_SIZE);
+    entry.seed = input_chunk->seed;
+    _plaintext_buffer[fp_key] = entry;
+    _plaintext_order.push_back(fp_key);
+    if (_plaintext_buffer.size() > PLAINTEXT_BUFFER_MAX) {
+        string oldest_key = _plaintext_order.front();
+        _plaintext_order.pop_front();
+        _plaintext_buffer.erase(oldest_key);
+    }
+    return ;
+}
+
+/**
+ * @brief lookup plaintext from the buffer
+ *
+ * @param compressed_fp the compressed fp as key
+ * @param out_entry output plaintext entry
+ * @return true found
+ * @return false not found
+ */
+bool SelectCompThd::LookupPlaintext(uint8_t* compressed_fp,
+    PlaintextEntry_t* out_entry) {
+    string fp_key((char*)compressed_fp, CHUNK_HASH_SIZE);
+    auto it = _plaintext_buffer.find(fp_key);
+    if (it != _plaintext_buffer.end()) {
+        *out_entry = it->second;
+        return true;
+    }
+    return false;
 }

@@ -159,6 +159,9 @@ void KeyGenThd::AddChunkToBuf(EncFeatureChunk_t& input_chunk,
     return ;
 }
 
+
+
+
 /**
  * @brief process a batch of chunks
  * 
@@ -201,6 +204,7 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
 #endif
 
     KeyGenRet_t* cur_key_ret = (KeyGenRet_t*) recv_buf_.data_buf;
+
     for (size_t i = 0; i < cur_batch_size; i++) {
         // // copy the key seed
         // memcpy(chunk_buf_[i].key, cur_key_ret->key_seed, CHUNK_HASH_SIZE);
@@ -209,6 +213,9 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
 
         // seed = plaintext fp
         chunk_buf_[i].seed = this->ConvertFp2Val(chunk_buf_[i].feature_chunk.chunk.raw_chunk.fp, CHUNK_HASH_SIZE);
+
+
+
 
 #ifdef EDR_BREAKDOWN
     gettimeofday(&_key_gen_stime, NULL);

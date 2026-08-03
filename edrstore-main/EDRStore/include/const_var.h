@@ -27,11 +27,25 @@ static const size_t MAX_CHUNK_SIZE = (1 << 14);// 16KB (最大分块大小)
 static const uint32_t CHUNK_QUEUE_SIZE = (1024 * 4);// 4096 (块队列容量)
 static const size_t THREAD_STACK_SIZE = (8*1024*1024);// 8MB (线程栈大小)
 
-// sketch & super-feature & feature settings  特征提取系统
-static const uint32_t SUPER_FEATURE_PER_CHUNK = 3; // 3 super-feature per chunk    每个块生成3个超级特征
-static const uint32_t FEATURE_PER_SUPER_FEATURE = 4; // 4 features per super-feature  每个超级特征包含4个特征
-static const uint32_t FEATURE_PER_CHUNK = SUPER_FEATURE_PER_CHUNK * 
-    FEATURE_PER_SUPER_FEATURE; // 12 total features per chunk  每个块共12个特征
+// ========== 超特征参数 ==========
+// SUPER_FEATURE_PER_CHUNK  = 每 chunk 的超特征数量
+// FEATURE_PER_SUPER_FEATURE = 每个超特征包含的子特征数量
+// FEATURE_PER_CHUNK         = 每 chunk 的总子特征数 = SUPER × SUB
+//
+// 当前保持论文的 SUPER=3, SUB=4, TOTAL=12 配置。MA.h 预留 32 个
+// 变换常量，但线上协议和持久化格式只使用前 FEATURE_PER_CHUNK 个。
+static const uint32_t SUPER_FEATURE_PER_CHUNK = 3;
+static const uint32_t FEATURE_PER_SUPER_FEATURE = 4;
+static const uint32_t FEATURE_PER_CHUNK = SUPER_FEATURE_PER_CHUNK *
+    FEATURE_PER_SUPER_FEATURE; // = 3 × 4 = 12
+
+static const uint32_t MAX_BASE_PER_FEATURE = 4; // 1:N feature index: max base_fp per feature
+
+// 论文的原始语义是任一超特征命中即进入候选；显式写 1 避免整数除法歧义。
+static const uint32_t SIMILAR_VOTE_THRESHOLD = 1;
+
+static const double SIMILARITY_THRESHOLD = 0.4; // 相似度门槛：低于此值的delta视为低质量，走全量存储
+static const double RECOMPRESS_COMPARE_THRESHOLD = 0.8;
 
 // for rabin fingerprint  // Rabin指纹多项式（指纹算法）
 static const uint64_t FINGERPRINT_PT = 0xbfe6b8a5bf378d83LL;
@@ -78,13 +92,16 @@ enum NETWORK_PROTOCOL_SET {CLIENT_LOGIN_UPLOAD = 0, CLIENT_LOGIN_DOWNLOAD,
     CLIENT_UPLOAD_RECIPE_END, SERVER_FILE_NON_EXIST, SERVER_RESTORE_RECIPE,
     CLIENT_RESTORE_READY, CLIENT_KEY_GEN, KEY_MANAGER_KEY_GEN_REPLY,
     CLIENT_RESTORE_RECIPE_REPLY, SERVER_RESTORE_CHUNK, SERVER_RESTORE_FINAL,
-    CLIENT_UPLOAD_FEATURE};
+    CLIENT_UPLOAD_FEATURE, CLIENT_UPLOAD_COMPLETE, SERVER_REQ_RECOMPRESS,
+    CLIENT_RESEND_COMPRESSED, CLIENT_RECOMPRESS_COMPLETE};
 
 //块状态类型
 enum CHUNK_STATUS_SET {UNIQUE_CHUNK = 0, UNIQUE_CHUNK_AFTER_CACHE, DUPLICATE_CHUNK, SIMILAR_CHUNK,
     NON_SIMILAR_CHUNK, COMP_DELTA_CHUNK, UNCOMP_DELTA_CHUNK, COMP_BASE_CHUNK,
     UNCOMP_BASE_CHUNK, CACHE_INSERT_CHUNK, CACHE_DELTA_CHUNK, CACHE_EVICT_CHUNK,
-    MULTI_LEVEL_DELTA_CHUNK, CHUNK_PAIR, SINGLE_CHUNK};
+    MULTI_LEVEL_DELTA_CHUNK, CHUNK_PAIR, SINGLE_CHUNK,
+    PENDING_RECOMPRESS_CHUNK, PENDING_LOCAL_DELTA_CHUNK,
+    COMPARE_RECOMPRESS_CHUNK, DEFERRED_LOCAL_DELTA_CHUNK};
 
 // for SSL connection   // SSL/TLS证书路径
 static const char SERVER_CERT[] = "../key/server/server.crt";

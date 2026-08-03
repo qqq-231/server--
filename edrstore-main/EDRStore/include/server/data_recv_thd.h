@@ -67,10 +67,24 @@ class DataRecvThd{
 
         /**
          * @brief process evict features
-         * 
+         *
          * @param cur_client current client
          */
         void ProcessEvictFeature(ClientVar* cur_client);
+
+        /**
+         * @brief process a recompress response from the client
+         *
+         * @param cur_client current client
+         */
+        void ProcessRecompressResponse(ClientVar* cur_client);
+
+        /**
+         * @brief drain pending recompress chunks (fallback to original data)
+         *
+         * @param cur_client current client
+         */
+        void DrainPendingRecompress(ClientVar* cur_client);
 
     public:
         uint64_t _chunk_batch_num = 0;

@@ -120,6 +120,10 @@ void DataReaderThd::FetchChunk(uint8_t* fp, ClientVar* cur_client) {
             // it is a normal base chunk, directly pass
             break;
         }
+        case UNCOMP_BASE_CHUNK: {
+            // it is an uncompressed encrypted base chunk, directly pass
+            break;
+        }
         case CACHE_DELTA_CHUNK: {
             // it is a similar chunk base on the cache
             this->ProcCacheDeltaChunk(addr, &raw_chunk, cur_client);
@@ -157,7 +161,14 @@ void DataReaderThd::ProcNormalDeltaChunk(KeyForChunkHashDB_t* input_addr,
     KeyForChunkHashDB_t* base_addr = (KeyForChunkHashDB_t*)&base_addr_str[0];
     storage_core_->ReadChunk(base_addr, raw_chunk->base_chunk.data, cur_client);
     raw_chunk->base_chunk.header.size = base_addr->len;
-    raw_chunk->base_chunk.header.type = base_addr->stat;
+    // 校验 base chunk 类型，防止多级增量导致下游崩溃
+    if (base_addr->stat != COMP_BASE_CHUNK) {
+        tool::Logging(my_name_.c_str(), "multi-level delta detected "
+            "in COMP_DELTA_CHUNK base, type: %u\n", base_addr->stat);
+        raw_chunk->base_chunk.header.type = MULTI_LEVEL_DELTA_CHUNK;
+    } else {
+        raw_chunk->base_chunk.header.type = base_addr->stat;
+    }
 
     return ;
 }
@@ -171,13 +182,11 @@ void DataReaderThd::ProcNormalDeltaChunk(KeyForChunkHashDB_t* input_addr,
  */
 void DataReaderThd::ProcCacheDeltaChunk(KeyForChunkHashDB_t* input_addr,
     Reader2Decoder_t* raw_chunk, ClientVar* cur_client) {
-    InformCache* inform_cache = cur_client->_inform_cache;
-    
-    // first check the cache
-    if (inform_cache->IsBaseChunkExist(input_addr->base_fp)) {
+    // 使用全局共享 InformCache 静态方法
+    if (InformCache::IsBaseChunkExist(input_addr->base_fp)) {
         // it exists, directly read from cache
         raw_chunk->base_chunk.header.size =
-            inform_cache->FetchBaseChunk(input_addr->base_fp,
+            InformCache::FetchBaseChunk(input_addr->base_fp,
                 raw_chunk->base_chunk.data);
         raw_chunk->base_chunk.header.type = UNCOMP_BASE_CHUNK;
     } else {
@@ -214,9 +223,16 @@ void DataReaderThd::ProcCacheDeltaChunk(KeyForChunkHashDB_t* input_addr,
                 storage_core_->ReadChunk(base_base_addr, tmp_base_chunk.base_chunk.data,
                     cur_client);
                 tmp_base_chunk.base_chunk.header.size = base_base_addr->len;
+                // 校验 base-base chunk 类型，防止三级增量
+                if (base_base_addr->stat != COMP_BASE_CHUNK) {
+                    tool::Logging(my_name_.c_str(), "multi-level delta "
+                        "in base-base chunk, type: %u\n", base_base_addr->stat);
+                    raw_chunk->base_chunk.header.type = MULTI_LEVEL_DELTA_CHUNK;
+                    break;
+                }
                 tmp_base_chunk.base_chunk.header.type = base_base_addr->stat;
 
-                // do delta decoding to restore the compressed base chunk 
+                // do delta decoding to restore the compressed base chunk
                 raw_chunk->base_chunk.header.size = delta_comp_->DeltaDecode(
                     tmp_base_chunk.base_chunk.data,
                     tmp_base_chunk.base_chunk.header.size,

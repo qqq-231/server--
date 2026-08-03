@@ -1,16 +1,18 @@
 /**
  * @file inform_cache.h
  * @author Zuoru YANG (zryang@cse.cuhk.edu.hk)
- * @brief define the interfaces 
- * @version 0.1
+ * @brief define the interfaces (global unified shared architecture)
+ * @version 0.2
  * @date 2022-08-02
- * 
+ *
  * @copyright Copyright (c) 2022
- * 
+ *
  */
 
 #ifndef EDRSTORE_INFORM_CACHE_H
 #define EDRSTORE_INFORM_CACHE_H
+
+#include <boost/thread/thread.hpp>
 
 #include "../configure.h"
 #include "../data_structure.h"
@@ -24,116 +26,105 @@ extern Configure config;
 class InformCache {
     private:
         string my_name_ = "InformCache";
-        uint32_t client_id_;
-        string cache_root_path_;
 
-        // feature to base fp
-        AbsDatabase* base_2_data_db_; // LevelDB
+        // ========== 全局共享静态成员 (所有客户端共用) ==========
+        static unordered_map<uint64_t, vector<string>> unified_feature_2_fp_db_;
+        static unordered_map<string, pair<uint32_t, uint32_t>> unified_base_2_cnt_idx_;
+        // client -> feature -> base_fp -> whether the association is persisted
+        static unordered_map<uint32_t, unordered_map<uint64_t,
+            unordered_map<string, bool>>> client_feature_2_fp_db_;
+        // Exact reference counts for each feature/base association.
+        static unordered_map<uint64_t, unordered_map<string, uint32_t>>
+            feature_base_ref_cnt_;
+        static unordered_map<uint64_t, unordered_map<string, uint32_t>>
+            persisted_feature_base_ref_cnt_;
+        static AbsDatabase* unified_base_2_data_db_;
+        static AbsDatabase* global_feature_2_fp_db_;
+        static boost::mutex cache_lock_;
+        static string cache_root_path_;
+        static string cache_base_chunk_str_;
 
-        // record the reference count <cnt, chunk size>
-    // 键：基准块指纹（base_fp_str）
-    // 值：pair<引用计数, 数据块大小>
-    // 第一个元素：引用计数（以特征数为单位）
-    // 第二个元素：数据块原始大小
-        unordered_map<string, pair<uint32_t,uint32_t>> base_2_cnt_idx_;
-        unordered_map<uint64_t, string> local_feature_2_fp_db_;
+        // Local multi-candidate selection diagnostics.
+        static uint64_t local_candidate_lookup_chunk_num_;
+        static uint64_t local_zero_candidate_chunk_num_;
+        static uint64_t local_single_candidate_chunk_num_;
+        static uint64_t local_multi_candidate_chunk_num_;
+        static uint64_t local_total_candidate_num_;
+        static uint64_t local_max_candidate_num_;
+        static uint64_t local_live_candidate_num_;
+        static uint64_t local_stale_candidate_num_;
+        static uint64_t local_missing_data_candidate_num_;
+        static uint64_t local_delta_evaluation_num_;
+        static uint64_t local_selected_not_best_num_;
+        static uint64_t local_potential_saved_bytes_;
+        static uint64_t local_missed_live_best_num_;
+        static uint64_t local_selected_below_threshold_num_;
+        static uint64_t local_best_avoids_reject_num_;
+        static uint64_t local_bucket_eviction_num_;
 
-        // for feature computation
+        struct CandidateDiagnostic {
+            string best_base_fp;
+            uint32_t best_delta_size = 0;
+            vector<uint8_t> best_delta;
+        };
+
+        static void LoadCntIdx();
+        static void StoreCntIdx();
+        static bool LoadAssociations();
+        static void StoreAssociations();
+
+        void AddAssociation(uint32_t client_id, uint64_t feature,
+            const string& base_fp, bool persist);
+        void RemoveClientFeature(uint32_t client_id, uint64_t feature);
+        void RemoveAssociationForAllClients(uint64_t feature,
+            const string& base_fp);
+        void RemoveBaseIfUnused(const string& base_fp);
+        bool IsBaseLive(const string& base_fp);
+        CandidateDiagnostic MeasureLocalCandidates(
+            WrappedChunk_t* input_chunk);
+        void RecordSelectedCandidate(const CandidateDiagnostic& diagnostic,
+            const string& selected_base_fp, uint32_t selected_delta_size,
+            uint32_t input_size);
+        void RecordMissedCandidate(const CandidateDiagnostic& diagnostic);
+        static void ReportLocalCandidateStats();
+
+        // ========== 无状态工具成员 (实例持有，线程安全) ==========
         FinesseUtil* finesse_util_;
-
-        // rabin ctx
-        RabinCtx_t rabin_ctx_;
         RabinFPUtil* rabin_util_;
-
-        // for similar detection
+        RabinCtx_t rabin_ctx_;
         SimilarPolicy* similar_policy_;
-
-        // for delta compression
         DeltaComp* delta_comp_;
-        string cache_base_chunk_str_;
-
-        /**
-         * @brief load cnt index
-         * 
-         */
-        void LoadCntIdx();
-
-        /**
-         * @brief store cnt index
-         * 
-         */
-        void StoreCntIdx();
 
     public:
+        // 全局生命周期管理
+        static void InitGlobalCache(AbsDatabase* feature_2_fp_db);
+        static void DestroyGlobalCache();
+
         /**
-         * @brief Construct a new InformCache object
-         * 
-         * @param client_id client id
+         * @brief Construct a new InformCache object (轻量级，仅创建无状态工具)
          */
-        InformCache(uint32_t client_id);
+        InformCache();
 
         /**
          * @brief Destroy the InformCache object
-         * 
          */
         ~InformCache();
 
-        /**
-         * @brief process normal chunk
-         * 
-         * @param input_chunk input chunk
-         * @param output_chunk output chunk
-         * @return true perform delta compression
-         * @return false cannot perform delta compression
-         */
+        // ========== 上传路径 (需要实例：使用 similar_policy_ / delta_comp_) ==========
+
         bool ProcessNormalChunk(WrappedChunk_t* input_chunk,
-            WrappedChunk_t* output_chunk);
-        
-        /**
-         * @brief process normal chunk
-         * 
-         * @param cache_chunk cache chunk
-         */
-        void InsertCachedChunk(WrappedChunk_t* cache_chunk);
-
-        /**
-         * @brief process evict chunk
-         * 
-         * @param evict_chunk evict_chunk
-         */
-        void EvictCacheChunk(WrappedChunk_t* evict_chunk);
-
-        /**
-         * @brief delete evict chunk
-         * 
-         * @return total cache size
-         */
+            WrappedChunk_t* output_chunk, uint32_t client_id);
+        void InsertCachedChunk(WrappedChunk_t* cache_chunk,
+            uint32_t client_id, bool update_global = true);
+        void EvictCacheChunk(WrappedChunk_t* evict_chunk,
+            uint32_t client_id);
         uint64_t DeleteEvictChunk();
-
-        /**
-         * @brief fetch base chunk from cache
-         * 
-         * @param base_fp base chunk fp
-         * @param output_base output base chunk <ret>
-         * @return uint32_t output base chunk size
-         */
-        uint32_t FetchBaseChunk(uint8_t* base_fp, uint8_t* output_base);
-
-        /**
-         * @brief check if req base chunk is exist
-         * 
-         * @param base_fp base chunk fp
-         * @return true exist
-         * @return false not exist
-         */
-        bool IsBaseChunkExist(uint8_t* base_fp);
-
-        /**
-         * @brief Get the Cache Size object
-         * 
-         * @return uint64_t the cache size
-         */
         uint64_t GetCacheSize();
+
+        // ========== 下载路径 (静态方法：无需实例) ==========
+
+        static uint32_t FetchBaseChunk(uint8_t* base_fp, uint8_t* output_base);
+        static bool IsBaseChunkExist(uint8_t* base_fp);
 };
 
 #endif

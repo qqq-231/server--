@@ -86,7 +86,7 @@ void BasicKM::Run(SSL* key_client_ssl) {
     uint8_t tmp_hash_buf[CHUNK_HASH_SIZE * 2] = {0};
     memcpy(tmp_hash_buf, global_secret_, CHUNK_HASH_SIZE);
 
-    uint8_t tmp_feature_buf[CHUNK_HASH_SIZE + sizeof(uint64_t) * 3] = {0};
+    uint8_t tmp_feature_buf[CHUNK_HASH_SIZE + sizeof(uint64_t) * SUPER_FEATURE_PER_CHUNK] = {0};
     memcpy(tmp_feature_buf, global_secret_, CHUNK_HASH_SIZE);
 
     // uint8_t tmp_padding_hash_buf[CHUNK_HASH_SIZE * 2] = {0};
@@ -147,18 +147,16 @@ void BasicKM::Run(SSL* key_client_ssl) {
                         //     cur_key_gen_ret->key);
 
                         
-                        // generate new key here    // 组合全局秘密和特征值生成新密钥
-                        // 密钥种子 = Hash(全局秘密+特征1+特征2+特征3)   ‘+'是连接
-                        memcpy(tmp_feature_buf + CHUNK_HASH_SIZE, &tmp_info.features[0], 
-                            sizeof(uint64_t));
-                        memcpy(tmp_feature_buf + CHUNK_HASH_SIZE + sizeof(uint64_t), 
-                            &tmp_info.features[1], sizeof(uint64_t));
-                        memcpy(tmp_feature_buf + CHUNK_HASH_SIZE + sizeof(uint64_t) * 2, 
-                            &tmp_info.features[2], sizeof(uint64_t));
+                        // generate new key here
+                        // 密钥种子 = Hash(全局秘密 + 所有 SUPER_FEATURE_PER_CHUNK 个超特征)
+                        for (size_t i = 0; i < SUPER_FEATURE_PER_CHUNK; i++) {
+                            memcpy(tmp_feature_buf + CHUNK_HASH_SIZE + i * sizeof(uint64_t),
+                                &tmp_info.features[i], sizeof(uint64_t));
+                        }
 
-                            // 使用加密哈希生成密钥
-                        crypto_util_->GenerateHash(md_ctx, tmp_feature_buf, CHUNK_HASH_SIZE + 
-                            sizeof(uint64_t) * 3, cur_key_gen_ret->key_seed);                   
+                        // 使用加密哈希生成密钥
+                        crypto_util_->GenerateHash(md_ctx, tmp_feature_buf, CHUNK_HASH_SIZE +
+                            sizeof(uint64_t) * SUPER_FEATURE_PER_CHUNK, cur_key_gen_ret->key_seed);                   
 
                         // update the index  // 更新索引：将新特征和密钥关联
                         similar_policy_->UpdateFeatureIndex(feature_2_key_index_,
