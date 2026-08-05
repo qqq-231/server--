@@ -170,12 +170,4 @@ typedef struct {
 
 typedef SendChunk_t Retriever2Writer_t;
 
-// 下载进度追踪结构（断点续传）
-typedef struct {
-    uint8_t file_name_hash[CHUNK_HASH_SIZE];  // 文件标识哈希
-    uint64_t total_chunks;                     // 期望总chunk数
-    uint64_t received_chunks;                  // 已完成chunk数
-    uint64_t received_bytes;                   // 已完成字节数
-} DownloadProgress_t;
-
 #endif

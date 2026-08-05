@@ -4,9 +4,9 @@
  * @brief define the thread to compute the ciphertext chunk features
  * @version 0.1
  * @date 2022-06-29
- *
+ * 
  * @copyright Copyright (c) 2022
- *
+ * 
  */
 
 #ifndef CIPHER_SIMILAR_THD_H
@@ -14,7 +14,6 @@
 
 #include "../chunker/finesse_util.h"
 #include "../chunker/n_transform.h"
-#include "../chunker/n_transform_gear.h"
 #include "../chunker/rabin_poly.h"
 #include "../message_queue/mq_factory.h"
 #include "../data_structure.h"
@@ -30,40 +29,38 @@ class CipherSimilarThd {
         string my_name_ = "CipherSimilarThd";
         string feature_2=config.Getfeature_2();
 
-    GearCtx_t gear_ctx_;  // gear指纹计算上下文
-        GearHashUtil* gear_util_ = nullptr;  // gear指纹计算工具
+GearCtx_t gear_ctx_;  // gear指纹计算上下文
+    GearHashUtil* gear_util_;  // gear指纹计算工具
 
-         OdessUtil* odess_util_ = nullptr;
-        // GearCtx_t gear_ctx_;  // gear指纹计算上下文
-        // GearHashUtil* gear_util_;  // gear指纹计算工具
-
-
-    OdessStart* odess_start_ = nullptr;
+     OdessUtil* odess_util_;
+    // GearCtx_t gear_ctx_;  // gear指纹计算上下文
+    // GearHashUtil* gear_util_;  // gear指纹计算工具
 
 
-        //=================OdessSimple
-         OdessSimple* odess_simple_ = nullptr;
-        // GearCtx_t gear_ctx_;  // gear指纹计算上下文
-        // GearHashUtil* gear_util_;  // gear指纹计算工具
-
-             FinesseUtil* finesse_util_ = nullptr;
-             RabinCtx_t rabin_ctx_;
-             RabinFPUtil* rabin_util_ = nullptr;
+OdessStart* odess_start_;
 
 
+    //=================OdessSimple
+     OdessSimple* odess_simple_;
+    // GearCtx_t gear_ctx_;  // gear指纹计算上下文
+    // GearHashUtil* gear_util_;  // gear指纹计算工具
 
-
-        New_MinHash* new_minhash_ = nullptr;
+         FinesseUtil* finesse_util_;
+         RabinCtx_t rabin_ctx_;
+         RabinFPUtil* rabin_util_;
 
 
 
 
-        //================= n_transform (Rabin-based)
-         NTransform* n_transform = nullptr;
+    New_MinHash* new_minhash_;
 
 
-        //================= n_transform_gear (Gear-based)
-        NTransform_gear* n_transform_gear = nullptr;
+
+
+    //================= n_transform
+     NTransform* n_transform;
+    // GearCtx_t gear_ctx_;  // gear指纹计算上下文
+    // GearHashUtil* gear_util_;  // gear指纹计算工具
 
 
     public:
@@ -75,19 +72,19 @@ class CipherSimilarThd {
 #endif
         /**
          * @brief Construct a new Cipher Similar Thd object
-         *
+         * 
          */
         CipherSimilarThd();
 
         /**
          * @brief Destroy the Cipher Similar Thd object
-         *
+         * 
          */
         ~CipherSimilarThd();
 
         /**
          * @brief the main thread
-         *
+         * 
          * @param input_MQ the input MQ
          */
         void Run(AbsMQ<EncFeatureChunk_t>* input_MQ, AbsMQ<EncFeatureChunk_t>* output_MQ);

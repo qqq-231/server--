@@ -162,8 +162,8 @@ void DataRetrieverThd::Run(AbsMQ<Retriever2Writer_t>* output_MQ) {
     gettimeofday(&etime, NULL);
     total_running_time += tool::GetTimeDiff(stime, etime);
 
-    if ((_total_recv_chunk_num != (recipe_head_.chunk_num - start_chunk_idx_)) ||
-        ((start_chunk_idx_ == 0) && (_total_recv_data_size != recipe_head_.size))) {
+    if ((_total_recv_chunk_num != recipe_head_.chunk_num) ||
+        (_total_recv_data_size != recipe_head_.size)) {
         tool::Logging(my_name_.c_str(), "download file mismatch error: recv "
             "chunk num: %lu, recv data size: %lu, expected chunk num: %lu, expected "
             "data size: %lu\n", _total_recv_chunk_num, _total_recv_data_size,
@@ -181,14 +181,10 @@ void DataRetrieverThd::Run(AbsMQ<Retriever2Writer_t>* output_MQ) {
  * 
  * @param file_name_hash the file name hash
  */
-void DataRetrieverThd::DownloadLogin(uint8_t* file_name_hash, uint64_t start_chunk_idx) {
-    start_chunk_idx_ = start_chunk_idx;
-
-    // 扩展协议：body = file_name_hash (32B) + start_chunk_idx (8B)
-    uint32_t body_size = CHUNK_HASH_SIZE + sizeof(uint64_t);
-
+void DataRetrieverThd::DownloadLogin(uint8_t* file_name_hash) {
     SendMsgBuffer_t login_buf;
-    login_buf.send_buf = (uint8_t*) malloc(sizeof(NetworkHead_t) + body_size);
+    login_buf.send_buf = (uint8_t*) malloc(sizeof(NetworkHead_t) + 
+        CHUNK_HASH_SIZE);
     login_buf.header = (NetworkHead_t*) login_buf.send_buf;
     login_buf.header->client_id = client_id_;
     login_buf.header->size = 0;
@@ -198,11 +194,6 @@ void DataRetrieverThd::DownloadLogin(uint8_t* file_name_hash, uint64_t start_chu
     memcpy(login_buf.data_buf + login_buf.header->size, file_name_hash,
         CHUNK_HASH_SIZE);
     login_buf.header->size += CHUNK_HASH_SIZE;
-
-    // 写入 start_chunk_idx（断点续传参数）
-    memcpy(login_buf.data_buf + login_buf.header->size, &start_chunk_idx,
-        sizeof(uint64_t));
-    login_buf.header->size += sizeof(uint64_t);
 
     // send the download login request
     if (!server_channel_->SendData(server_ssl_, login_buf.send_buf,
@@ -241,13 +232,6 @@ void DataRetrieverThd::DownloadLogin(uint8_t* file_name_hash, uint64_t start_chu
         recipe_head_.chunk_num);
     tool::Logging(my_name_.c_str(), "file size: %lu\n",
         recipe_head_.size);
-
-    // 断点续传：跳过前 start_chunk_idx 个 key recipe
-    if (start_chunk_idx > 0) {
-        key_recipe_hdl_.seekg(start_chunk_idx * sizeof(KeyRecipe_t), ios_base::cur);
-        tool::Logging(my_name_.c_str(), "skip first %lu key recipes for resume.\n",
-            start_chunk_idx);
-    }
 
     free(login_buf.send_buf);
     return ;

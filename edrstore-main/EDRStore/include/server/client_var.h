@@ -92,21 +92,18 @@ class ClientVar {
 
         SSL* _client_ssl; // SSL connection
 
-        uint64_t _start_chunk_idx; // 断点续传起始chunk索引
-
         uint64_t* _total_cache_size;
 
         /**
          * @brief Construct a new Client Var object
-         *
+         * 
          * @param client_id the client ID
          * @param client_ssl the client SSL
          * @param opt_type the operation type (upload / download)
          * @param recipe_path the file recipe path
-         * @param start_chunk_idx start chunk index for resume download
          */
         ClientVar(uint32_t client_id, SSL* client_ssl,
-            int opt_type, string& recipe_path, uint64_t start_chunk_idx = 0);
+            int opt_type, string& recipe_path);
 
         /**
          * @brief Destroy the Client Var object

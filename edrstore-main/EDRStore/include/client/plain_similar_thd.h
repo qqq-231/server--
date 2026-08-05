@@ -1,12 +1,12 @@
 /**
  * @file plain_similar_thd.h
  * @author Zuoru YANG (zryang@cse.cuhk.edu.hk)
- * @brief  define the thread to compute the plaintext chunk features
+ * @brief  define the thread to compute the plaintext chunk features 
  * @version 0.1
  * @date 2022-06-10
- *
+ * 
  * @copyright Copyright (c) 2022
- *
+ * 
  */
 
  //-------------------------------------
@@ -25,7 +25,6 @@
 #include "../chunker/odess_simple.h"
 #include "../chunker/new_minhash.h"
 #include "../chunker/n_transform.h"
-#include "../chunker/n_transform_gear.h"
 #include "../chunker/odess_util.h"
 #include "../chunker/gear_poly.h"
 #include "../message_queue/mq_factory.h"
@@ -42,40 +41,43 @@ class PlainSimilarThd {
         string feature=config.Getfeature_1();
 
 
+
+
         //
         // //===========Finesse=======
-        FinesseUtil* finesse_util_ = nullptr;// Finesse特征提取工具
+        FinesseUtil* finesse_util_;// Finesse特征提取工具
         RabinCtx_t rabin_ctx_;  // Rabin指纹计算上下文
-        RabinFPUtil* rabin_util_ = nullptr;  // Rabin指纹计算工具
+        RabinFPUtil* rabin_util_;  // Rabin指纹计算工具
 
 
    // ========= OdessUtil
-     OdessUtil* odess_util_ = nullptr;
+     OdessUtil* odess_util_;
      GearCtx_t gear_ctx_;  // gear指纹计算上下文
-     GearHashUtil* gear_util_ = nullptr;  // gear指纹计算工具
+     GearHashUtil* gear_util_;  // gear指纹计算工具
 
 
 
-    OdessStart* odess_start_ = nullptr;
+    OdessStart*odess_start_;
 
  //=================OdessSimple
-     OdessSimple* odess_simple_ = nullptr;
+     OdessSimple* odess_simple_;
      // GearCtx_t gear_ctx_;  // gear指纹计算上下文
      // GearHashUtil* gear_util_;  // gear指纹计算工具
 
 
- //================= n_transform (Rabin-based)
-      NTransform* n_transform = nullptr;
+ //================= n_transform
+      NTransform* n_transform;
+     // GearCtx_t gear_ctx_;  // gear指纹计算上下文
+     // GearHashUtil* gear_util_;  // gear指纹计算工具
+
 
 
      //
-     New_MinHash* new_minhash_ = nullptr;
+     New_MinHash* new_minhash_;
      // GearCtx_t gear_ctx_;  // gear指纹计算上下文
      // GearHashUtil* gear_util_;  // gear指纹计算工具
 
 
- //================= n_transform_gear (Gear-based)
-     NTransform_gear* n_transform_gear = nullptr;
 
 
     public:
@@ -87,19 +89,19 @@ class PlainSimilarThd {
 #endif
         /**
          * @brief Construct a new PlainSimilarThd object
-         *
+         * 
          */
         PlainSimilarThd();
 
         /**
          * @brief Destroy the PlainSimilarThd object
-         *
+         * 
          */
         ~PlainSimilarThd();
 
         /**
          * @brief the main thread
-         *
+         * 
          * @param input_MQ the input MQ
          * @param output_MQ the output MQ
          */

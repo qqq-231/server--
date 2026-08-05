@@ -106,26 +106,18 @@ void OdessUtil::ExtractFeature(GearCtx_t& ctx, uint8_t* data, uint32_t size,
 // }
 //
 
-    // ========== 改用 XXHash64 聚合（原 GEAR_TABLE 版注释保留在下方） ==========
-    for (int i = 0; i < super_feature_per_chunk_; i++) {
-        uint32_t base_idx = i * feature_per_super_feature_;
-        uint8_t* buf = (uint8_t*)(sub_features.data() + base_idx);
-        size_t len = sizeof(uint32_t) * feature_per_super_feature_;
-        features[i] = XXHash64::hash(buf, len, 0);
+
+    auto hash_buf = reinterpret_cast<const uint8_t*const>(sub_features.data());
+    for (int i = 0; i < super_feature_per_chunk_; i++) {  // 注意这里应该是 super_feature_per_chunk_
+        uint64_t hash_value = 0;
+        auto this_hash_buf = hash_buf + i * feature_per_super_feature_ * sizeof(uint32_t);
+        for (int j = 0; j < feature_per_super_feature_ * sizeof(uint32_t); j++) {
+            if (j < feature_per_chunk_ * sizeof(uint32_t)) {  // 边界检查
+                hash_value = (hash_value << 1) + GEAR_TABLE[this_hash_buf[j]];
+            }
+        }
+        features[i] = hash_value;
     }
-
-
-    // auto hash_buf = reinterpret_cast<const uint8_t*const>(sub_features.data());
-    // for (int i = 0; i < super_feature_per_chunk_; i++) {  // 注意这里应该是 super_feature_per_chunk_
-    //     uint64_t hash_value = 0;
-    //     auto this_hash_buf = hash_buf + i * feature_per_super_feature_ * sizeof(uint32_t);
-    //     for (int j = 0; j < feature_per_super_feature_ * sizeof(uint32_t); j++) {
-    //         if (j < feature_per_chunk_ * sizeof(uint32_t)) {  // 边界检查
-    //             hash_value = (hash_value << 1) + GEAR_TABLE[this_hash_buf[j]];
-    //         }
-    //     }
-    //     features[i] = hash_value;
-    // }
 
 
 

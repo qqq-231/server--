@@ -80,9 +80,19 @@ int main(int argc, char* argv[]) {
     boost::thread_attributes attrs;
     attrs.set_stack_size(THREAD_STACK_SIZE);
 
-    fp_2_addr_db = db_factory.CreateDatabase(LEVELDB_DB,
+    // ==================== 原 LevelDB 索引（已注释，替换为二叉树存储）====================
+    // fp_2_addr_db = db_factory.CreateDatabase(LEVELDB_DB,
+    //     config.GetFp2ChunkDBName());
+    // feature_2_fp_db = db_factory.CreateDatabase(LEVELDB_DB,
+    //     config.GetFeature2FpDBName());
+    // ==================== 二叉树存储索引（论文方案：满二叉树 + O(1)哈希映射）====================
+    // 选项1: IN_MEMORY_DB（已内部替换为二叉树存储）
+    fp_2_addr_db = db_factory.CreateDatabase(IN_MEMORY_DB,
         config.GetFp2ChunkDBName());
-    feature_2_fp_db = db_factory.CreateDatabase(LEVELDB_DB,
+    // 选项2: BINARY_TREE_DB（独立的二叉树数据库实现）
+    // fp_2_addr_db = db_factory.CreateDatabase(BINARY_TREE_DB,
+    //     config.GetFp2ChunkDBName());
+    feature_2_fp_db = db_factory.CreateDatabase(IN_MEMORY_DB,
         config.GetFeature2FpDBName());
 
     server_channel = new SSLConnection(config.GetStorageServerIP(),

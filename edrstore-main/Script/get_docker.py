@@ -1,7 +1,7 @@
 #script for downloading & processing the cassandra docker container traces
 from inspect import trace
 import os
-home_dir = "/home/usr" # need to change to your home dir
+home_dir = "/home/user2/数据/docker" # need to change to your home dir
 
 version_set = [
 "2",
@@ -80,44 +80,45 @@ version_set = [
 "3.0.27",
 "3.1",
 "3.1.1",
-"3.2",
-"3.2.1",
-"3.3",
-"3.4",
-"3.5",
-"3.6",
-"3.7",
-"3.8",
-"3.9",
-"3.10",
-"3.11",
-"3.11.0",
-"3.11.1",
-"3.11.2",
-"3.11.3",
-"3.11.4",
-"3.11.5",
-"3.11.6",
-"3.11.7",
-"3.11.8",
-"3.11.9",
-"3.11.10",
-"3.11.11",
-"3.11.12",
-"3.11.13"
-"4",
-"4.0",
-"4.0.0",
-"4.0.1",
-"4.0.2",
-"4.0.3",
-"4.0.4",
-"4.0.5"
+"3.2"
+# ,
+# "3.2.1",
+# "3.3",
+# "3.4",
+# "3.5",
+# "3.6",
+# "3.7",
+# "3.8",
+# "3.9",
+# "3.10",
+# "3.11",
+# "3.11.0",
+# "3.11.1",
+# "3.11.2",
+# "3.11.3",
+# "3.11.4",
+# "3.11.5",
+# "3.11.6",
+# "3.11.7",
+# "3.11.8",
+# "3.11.9",
+# "3.11.10",
+# "3.11.11",
+# "3.11.12",
+# "3.11.13"
+# "4",
+# "4.0",
+# "4.0.0",
+# "4.0.1",
+# "4.0.2",
+# "4.0.3",
+# "4.0.4",
+# "4.0.5"
 ]
 
 package_flag = "-cvf"
-download_output_folder = os.path.join(home_dir, "cassandra_src/download/") # for output folder
-repack_output_folder = os.path.join(home_dir, "cassandra_src/packed/") # for output folder
+download_output_folder = os.path.join(home_dir, "download/") # for output folder
+repack_output_folder = os.path.join(home_dir, "packed/") # for output folder
 
 #bash download-frozen-image-v2.sh tst couchbase:enterprise-6.6.1
 def Download(input_version):

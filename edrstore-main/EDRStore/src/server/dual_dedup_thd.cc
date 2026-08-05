@@ -130,6 +130,26 @@ void DualDedupThd::Run(ClientVar* cur_client) {
                     output_MQ->Push(input_data);
                     break;
                 }
+                case UNIQUE_CHUNK: {
+                    // legacy NORMAL_CHUNK from DataRecvThd
+                    input_data.info.stat = UNIQUE_CHUNK_AFTER_CACHE;
+#ifdef EDR_BREAKDOWN
+                    gettimeofday(&_cipher_feature_stime, NULL);
+#endif
+                    finesse_util_->ExtractFeature(cur_client->_rabin_ctx,
+                        input_data.data, input_data.info.size,
+                        input_data.info.features);
+#ifdef EDR_BREAKDOWN
+                    gettimeofday(&_cipher_feature_etime, NULL);
+                    _total_cipher_feature_time += tool::GetTimeDiff(
+                        _cipher_feature_stime, _cipher_feature_etime);
+                    _total_cipher_feature_data_size += input_data.info.size;
+#endif
+                    output_MQ->Push(input_data);
+                    _total_unique_chunk_num++;
+                    _total_unique_data_size += input_data.info.size;
+                    break;
+                }
                 default: {
                     tool::Logging(my_name_.c_str(), "wrong chunk input type.\n");
                     exit(EXIT_FAILURE);

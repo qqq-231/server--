@@ -64,8 +64,8 @@ version_set = [
 ]
 uncompressed_flag = "-xvzf"
 package_flag = "-cvf"
-download_output_folder = "./" # for output folder
-repack_output_folder = "~/sciLab_src/"
+download_output_folder = "/home/user2/数据/sciLab_src/" # for output folder
+repack_output_folder = "/home/user2/数据/sciLab_src/"
 
 def Download(input_link):
     cmd = "wget --no-check-certificate -P " + download_output_folder + " " + input_link + ".tar.gz"
@@ -96,7 +96,7 @@ def Process(input_version):
 
 if __name__ == "__main__":
 
-    print version_set
+    print (version_set)
 
     for version in version_set:
         input_link = prefix + version

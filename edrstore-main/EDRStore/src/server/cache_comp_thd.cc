@@ -27,6 +27,18 @@ CacheCompThd::~CacheCompThd() {
 
 }
 
+void CacheCompThd::RecordSimDist(uint32_t orig_size, uint32_t delta_size) {
+    float ratio = 1.0f - (float)delta_size / (float)orig_size;
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio < 0.4f) _sim_dist[0]++;
+    else if (ratio < 0.5f) _sim_dist[1]++;
+    else if (ratio < 0.6f) _sim_dist[2]++;
+    else if (ratio < 0.7f) _sim_dist[3]++;
+    else if (ratio < 0.8f) _sim_dist[4]++;
+    else if (ratio < 0.9f) _sim_dist[5]++;
+    else _sim_dist[6]++;
+}
+
 /**
  * @brief the main process
  * 
@@ -61,9 +73,34 @@ void CacheCompThd::Run(ClientVar* cur_client) {
             gettimeofday(&proc_stime, NULL);
             switch (input_data.info.stat) {
                 case UNIQUE_CHUNK_AFTER_CACHE: {
-                    // previous chunk is cached chunk
-                    input_data.info.stat = UNIQUE_CHUNK;// 状态转换
-                    output_MQ->Push(input_data);//直接推送队列
+                    // CHUNK_PAIR compressed data — check unified InformCache
+#ifdef EDR_BREAKDOWN
+                    gettimeofday(&_cache_delta_stime, NULL);
+#endif
+
+                    bool is_similar = inform_cache->ProcessNormalChunk(&input_data,
+                        &output_data);
+
+#ifdef EDR_BREAKDOWN
+                    gettimeofday(&_cache_delta_etime, NULL);
+                    _total_cache_delta_time += tool::GetTimeDiff(_cache_delta_stime,
+                        _cache_delta_etime);
+                    _total_cache_delta_data_size += input_data.info.size;
+#endif
+
+                    if (is_similar) {
+                        output_MQ->Push(output_data);
+                        _total_similar_chunk_num++;
+                        _total_similar_data_size += input_data.info.size;
+                        _total_delta_size += output_data.info.size;
+                        RecordSimDist(input_data.info.size, output_data.info.size);
+                    } else {
+                        // non-similar: insert as future base, then push as unique
+                        input_data.info.stat = CACHE_INSERT_CHUNK;
+                        inform_cache->InsertCachedChunk(&input_data);
+                        input_data.info.stat = UNIQUE_CHUNK;
+                        output_MQ->Push(input_data);
+                    }
                     break;
                 }
                 case UNIQUE_CHUNK: {
@@ -89,25 +126,13 @@ void CacheCompThd::Run(ClientVar* cur_client) {
                         _total_similar_chunk_num++;// 更新统计
                         _total_similar_data_size += input_data.info.size;
                         _total_delta_size += output_data.info.size;
-                        double similarity = 1.0 - (double)output_data.info.size / (double)input_data.info.size;
-                        if (similarity < 0.4) _similarity_hist[0]++;
-                        else if (similarity < 0.5) _similarity_hist[1]++;
-                        else if (similarity < 0.6) _similarity_hist[2]++;
-                        else if (similarity < 0.7) _similarity_hist[3]++;
-                        else if (similarity < 0.8) _similarity_hist[4]++;
-                        else if (similarity < 0.9) _similarity_hist[5]++;
-                        else _similarity_hist[6]++;
+                        RecordSimDist(input_data.info.size, output_data.info.size);
                     } else {
-                        // non-similar chunk, back to original stat
-                        if (inform_cache->GetCacheSize() == 0) {
-                            // 缓存为空，直接推送原始块
-                            input_data.info.stat = UNIQUE_CHUNK;
-                            output_MQ->Push(input_data);
-                        } else {
-                            // 缓存非空但没有找到相似块，这是异常情况
-                            tool::Logging(my_name_.c_str(), "wrong chunk type in cache.\n");
-                            exit(EXIT_FAILURE);
-                        }
+                        // non-similar: insert as future base for other chunks
+                        input_data.info.stat = CACHE_INSERT_CHUNK;
+                        inform_cache->InsertCachedChunk(&input_data);
+                        input_data.info.stat = UNIQUE_CHUNK;
+                        output_MQ->Push(input_data);
                     }
 
 // #ifdef EDR_BREAKDOWN
@@ -168,6 +193,20 @@ void CacheCompThd::Run(ClientVar* cur_client) {
 
     tool::Logging(my_name_.c_str(), "thread exits, total proc time: %lf, "
         "total running time: %lf\n", total_proc_time, total_running_time);
+
+    fprintf(stderr, "========相似度区间分布========\n");
+    fprintf(stderr, "[0~0.4):  %lu\n", _sim_dist[0]);
+    fprintf(stderr, "[0.4~0.5): %lu\n", _sim_dist[1]);
+    fprintf(stderr, "[0.5~0.6): %lu\n", _sim_dist[2]);
+    fprintf(stderr, "[0.6~0.7): %lu\n", _sim_dist[3]);
+    fprintf(stderr, "[0.7~0.8): %lu\n", _sim_dist[4]);
+    fprintf(stderr, "[0.8~0.9): %lu\n", _sim_dist[5]);
+    fprintf(stderr, "[0.9~1]:   %lu\n", _sim_dist[6]);
+    fprintf(stderr, "=============================\n");
+    uint64_t sim_dist_total = _sim_dist[0] + _sim_dist[1] + _sim_dist[2] +
+        _sim_dist[3] + _sim_dist[4] + _sim_dist[5] + _sim_dist[6];
+    fprintf(stderr, "相似块总数: %lu, 分布合计: %lu\n",
+        _total_similar_chunk_num, sim_dist_total);
 
     return ;
 }

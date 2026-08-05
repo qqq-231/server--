@@ -1,31 +1,42 @@
 /**
  * @file inform_cache.cc
  * @author Zuoru YANG (zryang@cse.cuhk.edu.hk)
- * @brief implement the interface of InformCache
+ * @brief implement the interface of InformCache (unified, no client_id)
  * @version 0.1
  * @date 2022-08-02
- * 
+ *
  * @copyright Copyright (c) 2022
- * 
+ *
  */
 
 #include "../../include/server/inform_cache.h"
 
+// static member definitions (unified, shared across all clients)
+AbsDatabase* InformCache::base_2_data_db_ = nullptr;
+unordered_map<string, pair<uint32_t,uint32_t>> InformCache::base_2_cnt_idx_;
+unordered_map<uint64_t, vector<string>> InformCache::unified_feature_2_fp_db_;
+boost::mutex InformCache::unified_db_mtx_;
+bool InformCache::unified_db_loaded_ = false;
+AbsDatabase* InformCache::global_feature_2_fp_db_ = nullptr;
+
 /**
  * @brief Construct a new InformCache object
- * 
- * @param client_id client id
+ *
  */
-InformCache::InformCache(uint32_t client_id) {
-    client_id_ = client_id;
+InformCache::InformCache() {
     cache_root_path_ = config.GetCacheRootPath();
-    this->LoadCntIdx();
 
-    DatabaseFactory db_factory;
-    string db_path = cache_root_path_ + to_string(client_id_) + "_db";
-    base_2_data_db_ = db_factory.CreateDatabase(ROCKSDB_DB,
-        db_path);
-    
+    boost::mutex::scoped_lock lck(unified_db_mtx_);
+    if (!unified_db_loaded_) {
+        this->LoadCntIdx();
+
+        DatabaseFactory db_factory;
+        string db_path = cache_root_path_ + "unified_db";
+        base_2_data_db_ = db_factory.CreateDatabase(ROCKSDB_DB, db_path);
+
+        unified_db_loaded_ = true;
+    }
+
     finesse_util_ = new FinesseUtil(SUPER_FEATURE_PER_CHUNK,
         FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
     rabin_util_ = new RabinFPUtil(config.GetSimilarSlidingWinSize());
@@ -33,17 +44,18 @@ InformCache::InformCache(uint32_t client_id) {
 
     similar_policy_ = new SimilarPolicy();
 
-    delta_comp_ = new DeltaComp(); 
+    delta_comp_ = new DeltaComp();
     cache_base_chunk_str_.reserve(ENC_MAX_CHUNK_SIZE);
 }
 
 /**
  * @brief Destroy the InformCache object
- * 
+ *
  */
 InformCache::~InformCache() {
     this->StoreCntIdx();
-    delete base_2_data_db_;
+    // Note: base_2_data_db_ is shared, deleted only by last instance
+    // For simplicity, we don't track instance count - OS cleans up on exit
     delete finesse_util_;
     rabin_util_->FreeCtx(rabin_ctx_);
     delete similar_policy_;
@@ -53,29 +65,34 @@ InformCache::~InformCache() {
 
 /**
  * @brief process normal chunk
- * 
+ *
  * @param cache_chunk cache chunk
  */
 void InformCache::InsertCachedChunk(WrappedChunk_t* cache_chunk) {
-    // update the local feature index
-    //准备基准块指纹
-    //将二进制指纹转换为字符串形式，便于作为数据库键使用
-    //base_fp_str 是基准块的唯一标识
-    string base_fp_str;
-    base_fp_str.assign((char*)cache_chunk->info.fp, CHUNK_HASH_SIZE);    
+    boost::mutex::scoped_lock lck(unified_db_mtx_);
 
-    //更新特征索引
-    similar_policy_->UpdateFeatureIndex(local_feature_2_fp_db_,
+    // prepare base chunk fingerprint
+    string base_fp_str;
+    base_fp_str.assign((char*)cache_chunk->info.fp, CHUNK_HASH_SIZE);
+
+    // update unified in-memory feature index
+    similar_policy_->UpdateFeatureIndex(unified_feature_2_fp_db_,
         cache_chunk->info.features, base_fp_str);
-    
+
+    // update global LevelDB feature index (persistent, comprehensive)
+    if (global_feature_2_fp_db_) {
+        similar_policy_->UpdateFeatureIndex(global_feature_2_fp_db_,
+            cache_chunk->info.features, cache_chunk->info.fp);
+    }
+
     if (base_2_cnt_idx_.find(base_fp_str) != base_2_cnt_idx_.end()) {
-        // 基准块已存在：增加引用计数
+        // base chunk exists: increment reference count
         base_2_cnt_idx_[base_fp_str].first += SUPER_FEATURE_PER_CHUNK;
     } else {
-        // insert to the kv-store   // 基准块不存在：创建新条目
-        base_2_cnt_idx_[base_fp_str] = 
+        // base chunk is new: create entry
+        base_2_cnt_idx_[base_fp_str] =
             {SUPER_FEATURE_PER_CHUNK, cache_chunk->info.size};
-        // 存储基准块数据
+        // store base chunk data
         cache_base_chunk_str_.assign((char*)cache_chunk->data,
             cache_chunk->info.size);
         base_2_data_db_->Insert(base_fp_str, cache_base_chunk_str_);
@@ -85,8 +102,8 @@ void InformCache::InsertCachedChunk(WrappedChunk_t* cache_chunk) {
 }
 
 /**
- * @brief process normal chunk
- * 
+ * @brief process normal chunk (unified similarity check + delta compression)
+ *
  * @param input_chunk input chunk
  * @param output_chunk output chunk
  * @return true perform delta compression
@@ -94,43 +111,56 @@ void InformCache::InsertCachedChunk(WrappedChunk_t* cache_chunk) {
  */
 bool InformCache::ProcessNormalChunk(WrappedChunk_t* input_chunk,
     WrappedChunk_t* output_chunk) {
-    //查找相似基准块
-    similar_policy_->FindBaseChunk(local_feature_2_fp_db_,
+
+    boost::mutex::scoped_lock lck(unified_db_mtx_);
+
+    // Step 1: check in-memory unified cache (fast, vector support)
+    similar_policy_->FindBaseChunk(unified_feature_2_fp_db_,
         &input_chunk->info);
-    //更新 input_chunk->info.stat 为 SIMILAR_CHUNK 或 NON_SIMILAR_CHUNK
+
+    // Step 2: if not found in memory, fall back to global LevelDB (comprehensive)
+    if (input_chunk->info.stat == NON_SIMILAR_CHUNK && global_feature_2_fp_db_) {
+        similar_policy_->FindBaseChunk(global_feature_2_fp_db_,
+            &input_chunk->info);
+    }
+
     bool ret = false;
-
-    switch (input_chunk->info.stat) {//找到相似块
+    switch (input_chunk->info.stat) {
         case SIMILAR_CHUNK: {
-            // fetch the base chunk 获取基准块数据
+            // try to fetch the base chunk from unified cache
             if (base_2_data_db_->QueryBuffer(
-                (char*)input_chunk->info.addr.base_fp,// 基准块的指纹
-                CHUNK_HASH_SIZE, cache_base_chunk_str_)) {// 查询结果存储在这里
-                // 2. 执行增量编码
+                (char*)input_chunk->info.addr.base_fp,
+                CHUNK_HASH_SIZE, cache_base_chunk_str_)) {
+                // perform delta encoding
                 output_chunk->info.size = delta_comp_->DeltaEncode(
-                    (uint8_t*)&cache_base_chunk_str_[0], // 基准块数据
-                    cache_base_chunk_str_.size(),// 基准块大小
-                    input_chunk->data, // 当前块数据
-                    input_chunk->info.size, // 当前块大小
-                    output_chunk->data); // 输出：增量数据
+                    (uint8_t*)&cache_base_chunk_str_[0],
+                    cache_base_chunk_str_.size(),
+                    input_chunk->data,
+                    input_chunk->info.size,
+                    output_chunk->data);
 
-                // copy the metadata to the input chunk  // 3. 复制元数据
-                memcpy(output_chunk->info.addr.base_fp,                 // 复制基准块指纹
+                // copy metadata
+                memcpy(output_chunk->info.addr.base_fp,
                     input_chunk->info.addr.base_fp, CHUNK_HASH_SIZE);
-                memcpy(output_chunk->info.fp, input_chunk->info.fp,     // 复制当前块指纹
+                memcpy(output_chunk->info.fp, input_chunk->info.fp,
                     CHUNK_HASH_SIZE);
-                output_chunk->info.stat = CACHE_DELTA_CHUNK;//标记
+                output_chunk->info.stat = CACHE_DELTA_CHUNK;
+                ret = true;
             } else {
-                // 错误：找到了相似块，但无法获取基准块数据
-                tool::Logging(my_name_.c_str(), "cannot find the base "
-                    "chunk in the inform cache.\n");
-                exit(EXIT_FAILURE);
+                // base chunk data not in cache (may come from LevelDB match)
+                // fall back to non-similar — will be stored as base and cached later
+                input_chunk->info.stat = NON_SIMILAR_CHUNK;
+                ret = false;
             }
-            ret = true;
             break;
         }
         case NON_SIMILAR_CHUNK: {
-            ret = false;// 返回false，表示未找到相似块
+            // update global LevelDB for future cross-client/cross-stage lookups
+            if (global_feature_2_fp_db_) {
+                similar_policy_->UpdateFeatureIndex(global_feature_2_fp_db_,
+                    input_chunk->info.features, input_chunk->info.fp);
+            }
+            ret = false;
             break;
         }
         default: {
@@ -144,14 +174,12 @@ bool InformCache::ProcessNormalChunk(WrappedChunk_t* input_chunk,
 
 /**
  * @brief load cnt index
- * 
+ *
  */
 void InformCache::LoadCntIdx() {
-    string cnt_idx_path = cache_root_path_ + to_string(client_id_) + "_cnt";
-    // check cache meta data exist
+    string cnt_idx_path = cache_root_path_ + "unified_cnt";
     ifstream cache_cnt_hdl;
     if (tool::FileExist(cnt_idx_path)) {
-        // check the file size
         cache_cnt_hdl.open(cnt_idx_path, ios_base::in | ios_base::binary);
         if (!cache_cnt_hdl.is_open()) {
             tool::Logging(my_name_.c_str(), "cannot open the cache cnt.\n");
@@ -168,7 +196,6 @@ void InformCache::LoadCntIdx() {
         }
         cache_cnt_hdl.seekg(0, ios_base::beg);
 
-        // it exists in the client, read it
         size_t idx_item_num = 0;
         cache_cnt_hdl.read((char*)&idx_item_num, sizeof(size_t));
         if (idx_item_num == 0) {
@@ -189,11 +216,9 @@ void InformCache::LoadCntIdx() {
         cache_cnt_hdl.close();
     }
 
-    // -------- load local feature index --------
-    // check local feature index exits
+    // -------- load unified feature index --------
     ifstream feature_idx_hdl;
-    string feature_idx_path = cache_root_path_ + to_string(client_id_) +
-        "_idx";
+    string feature_idx_path = cache_root_path_ + "unified_idx";
     if (tool::FileExist(feature_idx_path)) {
         feature_idx_hdl.open(feature_idx_path, ios_base::in | ios_base::binary);
         if (!feature_idx_hdl.is_open()) {
@@ -224,7 +249,7 @@ void InformCache::LoadCntIdx() {
         for (size_t i = 0; i < feature_item_num; i++) {
             feature_idx_hdl.read((char*)&feature, sizeof(uint64_t));
             feature_idx_hdl.read(&tmp_base_fp[0], CHUNK_HASH_SIZE);
-            local_feature_2_fp_db_[feature] = tmp_base_fp;
+            unified_feature_2_fp_db_[feature].push_back(tmp_base_fp);
         }
 
         feature_idx_hdl.close();
@@ -235,10 +260,12 @@ void InformCache::LoadCntIdx() {
 
 /**
  * @brief store cnt index
- * 
+ *
  */
 void InformCache::StoreCntIdx() {
-    string cnt_idx_path = cache_root_path_ + to_string(client_id_) + "_cnt";
+    boost::mutex::scoped_lock lck(unified_db_mtx_);
+
+    string cnt_idx_path = cache_root_path_ + "unified_cnt";
     ofstream cache_cnt_hdl;
     cache_cnt_hdl.open(cnt_idx_path, ios_base::trunc | ios_base::binary);
     if (!cache_cnt_hdl.is_open()) {
@@ -256,9 +283,8 @@ void InformCache::StoreCntIdx() {
     }
     cache_cnt_hdl.close();
 
-    // -------- store local feature index --------
-    string feature_idx_path = cache_root_path_ + to_string(client_id_) +
-        "_idx";
+    // -------- store unified feature index --------
+    string feature_idx_path = cache_root_path_ + "unified_idx";
     ofstream feature_idx_hdl;
     feature_idx_hdl.open(feature_idx_path, ios_base::trunc | ios_base::binary);
     if (!feature_idx_hdl.is_open()) {
@@ -267,12 +293,13 @@ void InformCache::StoreCntIdx() {
         exit(EXIT_FAILURE);
     }
 
-    size_t feature_item_num = local_feature_2_fp_db_.size();
+    size_t feature_item_num = unified_feature_2_fp_db_.size();
     feature_idx_hdl.write((char*)&feature_item_num, sizeof(size_t));
 
-    for (auto it : local_feature_2_fp_db_) {
+    for (auto it : unified_feature_2_fp_db_) {
         feature_idx_hdl.write((char*)&it.first, sizeof(uint64_t));
-        feature_idx_hdl.write(it.second.c_str(),CHUNK_HASH_SIZE);
+        for (size_t w = 0; w < it.second.size(); w++)
+            feature_idx_hdl.write(it.second[w].c_str(), CHUNK_HASH_SIZE);
     }
     feature_idx_hdl.close();
 
@@ -281,36 +308,43 @@ void InformCache::StoreCntIdx() {
 
 /**
  * @brief process evict chunk
- * 
+ *
  * @param evict_chunk evict_chunk
  */
 void InformCache::EvictCacheChunk(WrappedChunk_t* evict_chunk) {
+    boost::mutex::scoped_lock lck(unified_db_mtx_);
+
     uint32_t feature_num = evict_chunk->info.size;
     uint64_t* feature_ptr;
     string base_fp_str;
 
     for (size_t i = 0; i < feature_num; i++) {
         feature_ptr = (uint64_t*)(evict_chunk->data + i * sizeof(uint64_t));
-        // check base chunk hash
-        auto find_base_ret = local_feature_2_fp_db_.find(*feature_ptr);
-        if (find_base_ret != local_feature_2_fp_db_.end()) {
-            auto find_cnt_ret = base_2_cnt_idx_.find(find_base_ret->second);
-            if (find_cnt_ret != base_2_cnt_idx_.end()) {
-                if (find_cnt_ret->second.first > 0) {
-                    find_cnt_ret->second.first--;
+        auto find_base_ret = unified_feature_2_fp_db_.find(*feature_ptr);
+        if (find_base_ret != unified_feature_2_fp_db_.end()) {
+            for (size_t w = 0; w < find_base_ret->second.size(); w++) {
+                auto find_cnt_ret = base_2_cnt_idx_.find(find_base_ret->second[w]);
+                if (find_cnt_ret != base_2_cnt_idx_.end()) {
+                    if (find_cnt_ret->second.first > 0) {
+                        find_cnt_ret->second.first--;
+                    } else {
+                        find_cnt_ret->second.first = 0;
+                    }
                 } else {
-                    find_cnt_ret->second.first = 0;
+                    tool::Logging(my_name_.c_str(),
+                        "cannot find the evict chunk in count index, skip.\n");
+                    continue;
                 }
-            } else {
-                tool::Logging(my_name_.c_str(),
-                    "cannot find the evict chunk in count index, skip.\n");
-                continue;
             }
-
-            local_feature_2_fp_db_.erase(*feature_ptr);
+            unified_feature_2_fp_db_.erase(*feature_ptr);
+            // also evict from global LevelDB
+            if (global_feature_2_fp_db_) {
+                string feature_key((char*)feature_ptr, sizeof(uint64_t));
+                global_feature_2_fp_db_->Delete(feature_key);
+            }
         } else {
             tool::Logging(my_name_.c_str(), "cannot find the evict feature"
-                "in local feature index, skip.\n");
+                "in unified feature index, skip.\n");
         }
     }
 
@@ -319,10 +353,12 @@ void InformCache::EvictCacheChunk(WrappedChunk_t* evict_chunk) {
 
 /**
  * @brief delete evict chunk
- * 
+ *
  * @return total cache size
  */
 uint64_t InformCache::DeleteEvictChunk() {
+    boost::mutex::scoped_lock lck(unified_db_mtx_);
+
     uint64_t total_cache_size = 0;
     auto it = base_2_cnt_idx_.begin();
     while (it != base_2_cnt_idx_.end()) {
@@ -338,10 +374,9 @@ uint64_t InformCache::DeleteEvictChunk() {
     return total_cache_size;
 }
 
-
 /**
  * @brief check if req base chunk is exist
- * 
+ *
  * @param base_fp base chunk fp
  * @return true exist
  * @return false not exist
@@ -358,7 +393,7 @@ bool InformCache::IsBaseChunkExist(uint8_t* base_fp) {
 
 /**
  * @brief fetch base chunk from cache
- * 
+ *
  * @param base_fp base chunk fp
  * @param output_base output base chunk <ret>
  * @return uint32_t output base chunk size
@@ -377,9 +412,9 @@ uint32_t InformCache::FetchBaseChunk(uint8_t* base_fp, uint8_t* output_base) {
 
 /**
  * @brief Get the Cache Size object
- * 
+ *
  * @return uint64_t the cache size
  */
 uint64_t InformCache::GetCacheSize() {
-    return local_feature_2_fp_db_.size();
+    return unified_feature_2_fp_db_.size();
 }

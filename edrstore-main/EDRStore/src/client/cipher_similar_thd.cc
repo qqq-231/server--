@@ -1,19 +1,19 @@
 /**
  * @file cipher_similar_thd.cc
  * @author Zuoru YANG (zryang@cse.cuhk.edu.hk)
- * @brief
+ * @brief 
  * @version 0.1
  * @date 2022-06-29
- *
+ * 
  * @copyright Copyright (c) 2022
- *
+ * 
  */
 
 #include "../../include/client/cipher_similar_thd.h"
 
 /**
  * @brief Construct a new Cipher Similar Thd object
- *
+ * 
  */
 CipherSimilarThd::CipherSimilarThd() {
 
@@ -25,12 +25,6 @@ CipherSimilarThd::CipherSimilarThd() {
         finesse_util_ = new FinesseUtil(SUPER_FEATURE_PER_CHUNK,
             FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
         rabin_util_->NewCtx(rabin_ctx_);
-    } else if (feature_2=="n_transform")
-    {//使用n_transform (Rabin-based)
-         rabin_util_ = new RabinFPUtil(config.GetSimilarSlidingWinSize());
-         n_transform = new NTransform(SUPER_FEATURE_PER_CHUNK,
-             FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
-         rabin_util_->NewCtx(rabin_ctx_);
     }
     else
     {
@@ -63,50 +57,70 @@ CipherSimilarThd::CipherSimilarThd() {
             new_minhash_ = new New_MinHash(SUPER_FEATURE_PER_CHUNK,
             FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
 
-        }
-        else if (feature_2=="n_transform_gear")
+        }else if (feature_2=="n_transform")
         {//
-            n_transform_gear = new NTransform_gear(SUPER_FEATURE_PER_CHUNK,
+            n_transform = new NTransform(SUPER_FEATURE_PER_CHUNK,
              FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
 
         }
 
 
+
     }
+
+    // gear_util_ = new GearHashUtil(config.GetSimilarSlidingWinSize());
+    // gear_util_->NewCtx(gear_ctx_);
+
+    //
+    // //================  odess_util ====
+    // odess_util_ = new OdessUtil(SUPER_FEATURE_PER_CHUNK,
+    //      FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
+
+    // odess_simple_ = new OdessSimple(SUPER_FEATURE_PER_CHUNK,
+    //          FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
+
+    // rabin_util_ = new RabinFPUtil(config.GetSimilarSlidingWinSize());
+    // finesse_util_ = new FinesseUtil(SUPER_FEATURE_PER_CHUNK,
+    //     FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
+    // rabin_util_->NewCtx(rabin_ctx_);
+
+    //================  n_transform ====
+    // n_transform = new NTransform(SUPER_FEATURE_PER_CHUNK,
+    //    FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
+
+    // new_minhash_ = new New_MinHash(SUPER_FEATURE_PER_CHUNK,
+    //          FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
+
+
 
 }
 
 /**
  * @brief Destroy the Cipher Similar Thd object
- *
+ * 
  */
 CipherSimilarThd::~CipherSimilarThd() {
 
 
-    if (gear_util_) {
-        gear_util_->FreeCtx(gear_ctx_);
-        delete gear_util_;
-    }
+    gear_util_->FreeCtx(gear_ctx_);
+    delete gear_util_;
     delete odess_util_;
     delete odess_simple_;
     delete odess_start_;
-    delete n_transform;
-    delete n_transform_gear;
+    delete  n_transform;
     delete new_minhash_;
 
-    if (rabin_util_) {
-        rabin_util_->FreeCtx(rabin_ctx_);
-        delete rabin_util_;
-    }
+    rabin_util_->FreeCtx(rabin_ctx_);
+    delete rabin_util_;
     delete finesse_util_;
 }
 
 /**
  * @brief the main thread
- *
+ * 
  * @param input_MQ the input MQ
  */
-void CipherSimilarThd::Run(AbsMQ<EncFeatureChunk_t>* input_MQ,
+void CipherSimilarThd::Run(AbsMQ<EncFeatureChunk_t>* input_MQ, 
     AbsMQ<EncFeatureChunk_t>* output_MQ) {
     tool::Logging(my_name_.c_str(), "the main thread is running.\n");
 
@@ -120,7 +134,7 @@ void CipherSimilarThd::Run(AbsMQ<EncFeatureChunk_t>* input_MQ,
     EncFeatureChunk_t tmp_data;
     while (true) {
         if (input_MQ->_done && input_MQ->IsEmpty()) {
-            tool::Logging(my_name_.c_str(), "no chunk in the MQ, all jobs are done.\n");
+            tool::Logging(my_name_.c_str(), "no chunk in the MQ, all jobs are done.\n"); 
             break;
         }
 
@@ -132,6 +146,27 @@ void CipherSimilarThd::Run(AbsMQ<EncFeatureChunk_t>* input_MQ,
 
             switch (tmp_data.feature_chunk.chunk.type) {
                 case NORMAL_CHUNK: {
+                    //re-use the plaintext feature buffer to store features of ciphertext chunk
+                    // finesse_util_->ExtractFeature(rabin_ctx_, tmp_data.enc_data,
+                    //      tmp_data.enc_size, tmp_data.feature_chunk.features);
+
+                      //   odess_util_->ExtractFeature(gear_ctx_, tmp_data.enc_data,
+                      // tmp_data.enc_size, tmp_data.feature_chunk.features);
+
+                     //   odess_simple_->ExtractFeature(gear_ctx_, tmp_data.enc_data,
+                      // tmp_data.enc_size, tmp_data.feature_chunk.features);
+
+
+                        //==================  n_transform
+                       //  n_transform->ExtractFeature(gear_ctx_, tmp_data.enc_data,
+                       // tmp_data.enc_size, tmp_data.feature_chunk.features);
+
+                       //  new_minhash_->ExtractFeature(gear_ctx_, tmp_data.enc_data,
+                       // tmp_data.enc_size, tmp_data.feature_chunk.features);
+
+                       //  std::cout<<feature_2<<endl;
+
+
 
                         if (feature_2=="finesse")
                         {//使用finesse
@@ -168,15 +203,9 @@ void CipherSimilarThd::Run(AbsMQ<EncFeatureChunk_t>* input_MQ,
                                 new_minhash_->ExtractFeature(gear_ctx_, tmp_data.enc_data,
                        tmp_data.enc_size, tmp_data.feature_chunk.features);
 
-                            } else if (feature_2=="n_transform")
+                            }else if (feature_2=="n_transform")
                             {//
-                                 n_transform->ExtractFeature(rabin_ctx_, tmp_data.enc_data,
-                                tmp_data.enc_size, tmp_data.feature_chunk.features);
-
-                            }
-                            else if (feature_2=="n_transform_gear")
-                            {//
-                                n_transform_gear->ExtractFeature(gear_ctx_, tmp_data.enc_data,
+                                 n_transform->ExtractFeature(gear_ctx_, tmp_data.enc_data,
                                 tmp_data.enc_size, tmp_data.feature_chunk.features);
 
                             }
@@ -185,7 +214,7 @@ void CipherSimilarThd::Run(AbsMQ<EncFeatureChunk_t>* input_MQ,
 
                         }
 
-                    break;
+                    break;    
                 }
                 case RECIPE_CHUNK: {
                     // do not need to compute the feature
@@ -216,9 +245,17 @@ void CipherSimilarThd::Run(AbsMQ<EncFeatureChunk_t>* input_MQ,
     total_running_time += tool::GetTimeDiff(stime, etime);
 
 
-    tool::Logging(feature_2.c_str(),"CipherSimilarThd\n");
+
+    tool::Logging(feature_2.c_str(),"aa\n");
+    //---------------------
+    //tool::Logging(my_name_.c_str(), "use odess_util算法\n");
+   // tool::Logging(my_name_.c_str(), "use odess_simple算法\n");
+   // tool::Logging(my_name_.c_str(), "use N_TransForm 算法.\n");
+    // tool::Logging(my_name_.c_str(), "use finesse 算法.\n");
+    //tool::Logging(my_name_.c_str(), "use minhash 算法.\n");
+   // tool::Logging(feature.c_str(), feature+"算法\n");
     tool::Logging(my_name_.c_str(), "thread exits, total running time: %lf\n",
         total_running_time);
-
+    
     return ;
 }

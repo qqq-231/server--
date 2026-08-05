@@ -47,7 +47,7 @@ class SimilarPolicy {
          * @param feature_2_fp_db feature to base fp index
          * @param info chunk info
          */
-        void FindBaseChunk(unordered_map<uint64_t, string>& feature_2_fp_db,
+        void FindBaseChunk(unordered_map<uint64_t, vector<string>>& feature_2_fp_db,
             ChunkInfo_t* info);
 
         /**
@@ -67,7 +67,7 @@ class SimilarPolicy {
          * @param features chunk feature
          * @param base_fp base chunk fp
          */
-        void UpdateFeatureIndex(unordered_map<uint64_t, string>& feature_2_fp_db,
+        void UpdateFeatureIndex(unordered_map<uint64_t, vector<string>>& feature_2_fp_db,
             uint64_t* features, string& base_fp);
 };
 

@@ -10,6 +10,7 @@
  */
 
 #include "../../include/server/server_opt_thd.h"
+#include "../../include/server/inform_cache.h"
 
 /**
  * @brief Construct a new ServerOptThd object
@@ -26,11 +27,14 @@ ServerOptThd::ServerOptThd(SSLConnection* server_channel,
 
     // init the upload
     storage_core_ = new StorageCore();
+
+    // wire the global LevelDB feature→fp index into InformCache
+    InformCache::SetGlobalFeatureDB(feature_2_fp_db_);
     
     data_recv_thd_ = new DataRecvThd(server_channel_, fp_2_addr_db_);
     cache_comp_thd_ = new CacheCompThd();
     data_writer_thd_ = new DataWriterThd(fp_2_addr_db_,
-        feature_2_fp_db_, storage_core_);
+        storage_core_);
     dual_dedup_thd_ = new DualDedupThd(fp_2_addr_db_); 
     
     data_reader_thd_ = new DataReaderThd(fp_2_addr_db_, storage_core_);
@@ -63,42 +67,11 @@ ServerOptThd::~ServerOptThd() {
         _total_upload_opt_num);
     fprintf(stderr, "total recv download req: %lu\n", 
         _total_download_opt_num);
-    fprintf(stderr, "total recv upload req: %lu\n", 
-        _total_upload_opt_num);
-    fprintf(stderr, "total recv download req: %lu\n", 
-        _total_download_opt_num);
 
           fprintf(stderr, "本地不相似度 %lf%%\n",
        (double)cache_comp_thd_->_total_delta_size/ cache_comp_thd_->_total_similar_data_size*100);
         fprintf(stderr, "全局不相似度 %lf%%\n",
        (double)data_writer_thd_->_total_delta_size / data_writer_thd_->_total_similar_data_size*100);
-    fprintf(stderr, "--------相似度区间分布--------\n");
-    fprintf(stderr, "区间\t\t本地相似块数\t全局相似块数\t合计\n");
-    const char* intervals[] = {
-        "[0.0~0.4)", "[0.4~0.5)", "[0.5~0.6)", "[0.6~0.7)",
-        "[0.7~0.8)", "[0.8~0.9)", "[0.9~1.0]"
-    };
-    uint64_t local_hist_sum = 0;
-    uint64_t global_hist_sum = 0;
-    for (int i = 0; i < 7; i++) {
-        uint64_t row_sum = cache_comp_thd_->_similarity_hist[i]
-            + data_writer_thd_->_similarity_hist[i];
-        fprintf(stderr, "%s\t%lu\t\t%lu\t\t%lu\n",
-            intervals[i],
-            cache_comp_thd_->_similarity_hist[i],
-            data_writer_thd_->_similarity_hist[i],
-            row_sum);
-        local_hist_sum += cache_comp_thd_->_similarity_hist[i];
-        global_hist_sum += data_writer_thd_->_similarity_hist[i];
-    }
-    fprintf(stderr, "---------------------------------\n");
-    fprintf(stderr, "直方图合计\t%lu\t\t%lu\t\t%lu\n",
-        local_hist_sum, global_hist_sum,
-        local_hist_sum + global_hist_sum);
-    fprintf(stderr, "原有计数器\t%lu\t\t%lu\t\t%lu\n",
-        cache_comp_thd_->_total_similar_chunk_num,
-        data_writer_thd_->_total_similar_chunk_num,
-        cache_comp_thd_->_total_similar_chunk_num + data_writer_thd_->_total_similar_chunk_num);
     fprintf(stderr, "=================================\n");
 }
 
@@ -114,7 +87,7 @@ void ServerOptThd::Run(SSL* client_ssl) {
     vector<boost::thread*> thd_list;
 
     SendMsgBuffer_t recv_buf;
-    recv_buf.send_buf = (uint8_t*) malloc(sizeof(NetworkHead_t) + CHUNK_HASH_SIZE + sizeof(uint64_t));
+    recv_buf.send_buf = (uint8_t*) malloc(sizeof(NetworkHead_t) + CHUNK_HASH_SIZE);
     recv_buf.header = (NetworkHead_t*) recv_buf.send_buf;
     recv_buf.header->size = 0;
     recv_buf.data_buf = recv_buf.send_buf + sizeof(NetworkHead_t);
@@ -239,29 +212,13 @@ void ServerOptThd::Run(SSL* client_ssl) {
             _total_download_opt_num++;
             tool::Logging(my_name_.c_str(), "recv the download req from client: %u\n",
                 client_id);
-
-            // 解析断点续传参数（扩展协议：body = file_name_hash + start_chunk_idx）
-            uint64_t start_chunk_idx = 0;
-            if (recv_buf.header->size >= CHUNK_HASH_SIZE + sizeof(uint64_t)) {
-                memcpy(&start_chunk_idx, recv_buf.data_buf + CHUNK_HASH_SIZE,
-                    sizeof(uint64_t));
-            }
-
             cur_client = new ClientVar(client_id, client_ssl, DOWNLOAD_OPT,
-                recipe_path, start_chunk_idx);
-
+                recipe_path);
+            
             // send the download-response to the client (include the file recipe header)
             recv_buf.header->msg_type = SERVER_LOGIN_RESPONSE;
             cur_client->_recipe_read_hdl.read((char*)recv_buf.data_buf,
                 sizeof(FileRecipeHead_t));
-
-            // 断点续传：跳过前 start_chunk_idx 个chunk指纹
-            if (start_chunk_idx > 0) {
-                cur_client->_recipe_read_hdl.seekg(start_chunk_idx * CHUNK_HASH_SIZE,
-                    ios_base::cur);
-                tool::Logging(my_name_.c_str(), "skip %lu chunks for resume download.\n",
-                    start_chunk_idx);
-            }
             if (!server_channel_->SendData(client_ssl, recv_buf.send_buf,
                 sizeof(NetworkHead_t) + sizeof(FileRecipeHead_t))) {
                 tool::Logging(my_name_.c_str(), "send the download-login response error.\n");
@@ -443,15 +400,6 @@ void ServerOptThd::LoadStat() {
                 (char*)&data_writer_thd_->_total_delta_size,
                 sizeof(uint64_t));
 
-            // for local similarity histogram
-            prev_stat_file_hdl.read(
-                (char*)cache_comp_thd_->_similarity_hist,
-                sizeof(uint64_t) * 7);
-            // for global similarity histogram
-            prev_stat_file_hdl.read(
-                (char*)data_writer_thd_->_similarity_hist,
-                sizeof(uint64_t) * 7);
-
             // for total stored data
             prev_stat_file_hdl.read((char*)&storage_core_->_write_chunk_num,
                 sizeof(uint64_t));
@@ -511,15 +459,6 @@ void ServerOptThd::StoreStat() {
         prev_stat_file_hdl.write(
             (char*)&data_writer_thd_->_total_delta_size,
             sizeof(uint64_t));
-
-        // for local similarity histogram
-        prev_stat_file_hdl.write(
-            (char*)cache_comp_thd_->_similarity_hist,
-            sizeof(uint64_t) * 7);
-        // for global similarity histogram
-        prev_stat_file_hdl.write(
-            (char*)data_writer_thd_->_similarity_hist,
-            sizeof(uint64_t) * 7);
 
         // for total stored data
         prev_stat_file_hdl.write((char*)&storage_core_->_write_chunk_num,

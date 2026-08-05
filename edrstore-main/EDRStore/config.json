@@ -6,9 +6,9 @@
         "min_chunk_size": 4096,
         "sliding_win_size": 128,
         "read_size": 128,
-        "mask": "0x00FF",
-        "feature_1": "odess",
-        "feature_2": "finesse"
+        "mask": "0x3FFF",
+        "feature_1": "odess_start",
+        "feature_2": "odess_start"
 
 
 
@@ -19,7 +19,7 @@
     },
     "StorageServer": {
         "ip": "127.0.0.1",
-        "port": 16666,
+        "port": 18888,
         "recipe_root_path": "Recipes/",
         "container_root_path": "Containers/",
         "cache_root_path": "Cache/",
@@ -29,7 +29,7 @@
     },
     "KeyServer": {
         "ip": "127.0.0.1",
-        "port": 16667,
+        "port": 18887,
         "feature_2_key_db": "feature_key_db"
     },
     "Client": {

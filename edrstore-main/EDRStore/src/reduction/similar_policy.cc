@@ -94,27 +94,24 @@ void SimilarPolicy::FindBaseChunk(AbsDatabase* feature_2_fp_db,
  * @param info chunk info
  */
 void SimilarPolicy::FindBaseChunk(
-    unordered_map<uint64_t, string>& feature_2_fp_db,
+    unordered_map<uint64_t, vector<string>>& feature_2_fp_db,
     ChunkInfo_t* info) {
+
     // query the feature index to get the base chunk hash
     unordered_map<string, uint32_t> feature_freq_map;
     bool is_similar = false;
-    bool is_first_match = true;
-    uint8_t first_match_base_fp[CHUNK_HASH_SIZE];
+
     for (size_t i = 0; i < SUPER_FEATURE_PER_CHUNK; i++) {
         // count the freq of each base key
         auto find_base_ret = feature_2_fp_db.find(info->features[i]);
         if (find_base_ret != feature_2_fp_db.end()) {
-            if (is_first_match) {
-                memcpy(first_match_base_fp, find_base_ret->second.c_str(),
-                    CHUNK_HASH_SIZE);
-                is_first_match = false;
-            }
-            auto find_freq_ret = feature_freq_map.find(find_base_ret->second);
-            if (find_freq_ret != feature_freq_map.end()) {
-                find_freq_ret->second++;
-            } else {
-                feature_freq_map[find_base_ret->second] = 1;
+            for (size_t j = 0; j < find_base_ret->second.size(); j++) {
+                auto find_freq_ret = feature_freq_map.find(find_base_ret->second[j]);
+                if (find_freq_ret != feature_freq_map.end()) {
+                    find_freq_ret->second++;
+                } else {
+                    feature_freq_map[find_base_ret->second[j]] = 1;
+                }
             }
             is_similar = true;
         }
@@ -128,17 +125,20 @@ void SimilarPolicy::FindBaseChunk(
             tmp_freq_vec.push_back(it);
         }
         sort(tmp_freq_vec.begin(), tmp_freq_vec.end(), CmpPair);
-        if (tmp_freq_vec[0].second == 1) {
-            memcpy(info->addr.base_fp, first_match_base_fp, CHUNK_HASH_SIZE);
+
+        if (tmp_freq_vec[0].second < SUPER_FEATURE_PER_CHUNK / 2) {
+            info->stat = NON_SIMILAR_CHUNK;
+            feature_freq_map.clear();
         } else {
             memcpy(info->addr.base_fp, tmp_freq_vec[0].first.c_str(),
                 CHUNK_HASH_SIZE);
+            info->stat = SIMILAR_CHUNK;
+            feature_freq_map.clear();
         }
-        info->stat = SIMILAR_CHUNK;
     } else {
         info->stat = NON_SIMILAR_CHUNK;
     }
-    
+
     return ;
 }
 
@@ -169,11 +169,11 @@ void SimilarPolicy::UpdateFeatureIndex(AbsDatabase* feature_2_fp_db,
  * @param base_fp base chunk fp
  */
 void SimilarPolicy::UpdateFeatureIndex(
-    unordered_map<uint64_t, string>& feature_2_fp_db,
+    unordered_map<uint64_t, vector<string>>& feature_2_fp_db,
     uint64_t* features, string& base_fp) {
     // non-similar chunk, update the feature index
     for (size_t i = 0; i < SUPER_FEATURE_PER_CHUNK; i++) {
-        feature_2_fp_db[features[i]] = base_fp;
+        feature_2_fp_db[features[i]].push_back(base_fp);
     }
     return ;
 }

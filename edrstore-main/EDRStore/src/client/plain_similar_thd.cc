@@ -4,9 +4,9 @@
  * @brief implement the interface of PlainSimilarThd
  * @version 0.1
  * @date 2022-06-10
- *
+ * 
  * @copyright Copyright (c) 2022
- *
+ * 
  */
 
 #include "../../include/client/plain_similar_thd.h"
@@ -15,10 +15,10 @@
 
 /**
  * @brief Construct a new PlainSimilarThd object
- *
+ * 
  */
 PlainSimilarThd::PlainSimilarThd() {
-
+//
 if (feature=="finesse")
 {//使用finesse
 //==================  finesse  ==========================
@@ -26,12 +26,6 @@ if (feature=="finesse")
      finesse_util_ = new FinesseUtil(SUPER_FEATURE_PER_CHUNK,
          FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
     rabin_util_->NewCtx(rabin_ctx_);
-} else if (feature=="n_transform")
-{//使用n_transform (Rabin-based)
-     rabin_util_ = new RabinFPUtil(config.GetSimilarSlidingWinSize());
-     n_transform = new NTransform(SUPER_FEATURE_PER_CHUNK,
-         FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
-     rabin_util_->NewCtx(rabin_ctx_);
 }
 else
 {
@@ -63,9 +57,9 @@ else
          new_minhash_ = new New_MinHash(SUPER_FEATURE_PER_CHUNK,
          FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
 
-    } else if (feature=="n_transform_gear")
+    }else if (feature=="n_transform")
     {//
-        n_transform_gear = new NTransform_gear(SUPER_FEATURE_PER_CHUNK,
+        n_transform = new NTransform(SUPER_FEATURE_PER_CHUNK,
          FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
 
     }
@@ -74,36 +68,55 @@ else
 
 }
 
+    //-------------------初始化，rabin进行初始化并且初始化上下文
+   //
+
+    // rabin_util_ = new RabinFPUtil(config.GetSimilarSlidingWinSize());
+    //  finesse_util_ = new FinesseUtil(SUPER_FEATURE_PER_CHUNK,
+    //      FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
+    // rabin_util_->NewCtx(rabin_ctx_);
+
+
+    //================  odess_util ====
+
+    // //================ odess_simple ====
+     // odess_simple_ = new OdessSimple(SUPER_FEATURE_PER_CHUNK,
+     //      FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
+
+
+    //================  n_transform ====
+
+
+
+
 }
 
 /**
  * @brief Destroy the PlainSimilarThd object
- *
+ * 
  */
 PlainSimilarThd::~PlainSimilarThd() {
 
-    if (gear_util_) {
-        gear_util_->FreeCtx(gear_ctx_);
-        delete gear_util_;
-    }
+    gear_util_->FreeCtx(gear_ctx_);
+    delete gear_util_;
 
+    //
+    //
+    //
     delete odess_util_;
     delete odess_simple_;
-    delete n_transform;
-    delete n_transform_gear;
+    delete  n_transform;
     delete new_minhash_;
     delete odess_start_;
     //============  rabin  finess  =======================
-    if (rabin_util_) {
-        rabin_util_->FreeCtx(rabin_ctx_);
-        delete rabin_util_;
-    }
+    rabin_util_->FreeCtx(rabin_ctx_);
+    delete rabin_util_;
     delete finesse_util_;
 }
 
 /**
  * @brief the main thread
- *
+ * 
  * @param input_MQ the input MQ
  * @param output_MQ the output MQ
  */
@@ -170,22 +183,37 @@ void PlainSimilarThd::Run(AbsMQ<Chunk_t>* input_MQ,
                                 new_minhash_->ExtractFeature(gear_ctx_, tmp_data.chunk.raw_chunk.data,
                                                    tmp_data.chunk.raw_chunk.size, tmp_data.features);
 
-                            } else if (feature=="n_transform")
+                            }else if (feature=="n_transform")
                             {//
-                                n_transform->ExtractFeature(rabin_ctx_, tmp_data.chunk.raw_chunk.data,
-                                    tmp_data.chunk.raw_chunk.size, tmp_data.features);
-
-                            }
-                            else if (feature=="n_transform_gear")
-                            {//
-                                n_transform_gear->ExtractFeature(gear_ctx_, tmp_data.chunk.raw_chunk.data,
-                                    tmp_data.chunk.raw_chunk.size, tmp_data.features);
+                                n_transform = new NTransform(SUPER_FEATURE_PER_CHUNK,
+                                 FEATURE_PER_CHUNK, FEATURE_PER_SUPER_FEATURE);
 
                             }
 
 
 
                         }
+                        // //------------使用了odess_util-----------------------------------
+                            // odess_util_->ExtractFeature(gear_ctx_, tmp_data.chunk.raw_chunk.data,
+                            //                    tmp_data.chunk.raw_chunk.size, tmp_data.features);
+
+                        //==================  odess_simple_
+                        // odess_simple_->ExtractFeature(gear_ctx_, tmp_data.chunk.raw_chunk.data,
+                        //                       tmp_data.chunk.raw_chunk.size, tmp_data.features);
+
+                        //==================  n_transform
+                        //n_transform->ExtractFeature(gear_ctx_, tmp_data.chunk.raw_chunk.data,
+                         //                     tmp_data.chunk.raw_chunk.size, tmp_data.features);
+
+
+                       // new_minhash_->ExtractFeature(gear_ctx_, tmp_data.chunk.raw_chunk.data,
+                       //                              tmp_data.chunk.raw_chunk.size, tmp_data.features);
+
+
+
+                    //------------使用了finesse-----------------------------------
+                  // finesse_util_->ExtractFeature(rabin_ctx_, tmp_data.chunk.raw_chunk.data,
+                  //     tmp_data.chunk.raw_chunk.size, tmp_data.features);
                     break;
                 }
                 case RECIPE_CHUNK: {
@@ -216,7 +244,13 @@ void PlainSimilarThd::Run(AbsMQ<Chunk_t>* input_MQ,
     gettimeofday(&etime, NULL);
     total_running_time += tool::GetTimeDiff(stime, etime);
 
-    tool::Logging(feature.c_str(),"PlainSimilarThd\n");
+  //  tool::Logging(my_name_.c_str(), "use finesse 算法\n");
+    //tool::Logging(my_name_.c_str(), "use odess_util算法\n");
+    //tool::Logging(my_name_.c_str(), "use odess_simple算法\n");
+   // tool::Logging(my_name_.c_str(), "use new_minhash 算法\n");
+    //tool::Logging(my_name_.c_str(), feature);
+    tool::Logging(feature.c_str(),"bb\n");
+   // tool::Logging(feature.c_str(), feature+"算法\n");
     tool::Logging(my_name_.c_str(), "thread exits, total running time: %lf\n",
         total_running_time);
 

@@ -75,8 +75,7 @@ string breakdown_stat_file_name = "breakdown-stat";
 
 
 void Usage() {
-    fprintf(stderr, "%s -t [u/d] -i [input file path] -m [method] -c [client id] "
-        "-o [output dir].\n"
+    fprintf(stderr, "%s -t [u/d] -i [input file path] -m [method] -c [client id].\n"
         "-t: operation ([u/d]):\n"
         "\tu: upload\n"
         "\td: download\n"
@@ -84,8 +83,7 @@ void Usage() {
         "\t0: similar-aware encryption\n"
         "\t1: similar-aware encryption + local compression\n"
         "\t2: full EDR\n"
-        "-c: client id (optional, default from config.json)\n"
-        "-o: output directory for download (optional, default: same as -i path)\n",
+        "-c: client id (optional, default from config.json)\n",
         my_name.c_str());
     return ;
 }
@@ -135,10 +133,10 @@ int main(int argc, char* argv[]) {
     // printf("%d", ee.tv_usec);
     //cout<<ss.tv_sec<<" "<<ss.tv_usec<<endl;
 
-    const char opt_str[] = "t:i:m:c:o:";
+    const char opt_str[] = "t:i:m:c:";
     int option;
 
-    if (argc < (int)(sizeof(opt_str) - 1)) {
+    if (argc < (int)sizeof(opt_str)) {
         tool::Logging(my_name.c_str(), "wrong argc: %d\n", argc);
         Usage();
         exit(EXIT_FAILURE);
@@ -146,7 +144,6 @@ int main(int argc, char* argv[]) {
 
     uint32_t opt_type;
     string input_file_path;
-    string output_dir;
     uint32_t method_type;
     int client_id_override = -1;
     while ((option = getopt(argc, argv, opt_str)) != -1) {
@@ -191,10 +188,6 @@ int main(int argc, char* argv[]) {
             }
             case 'c': {
                 client_id_override = atoi(optarg);
-                break;
-            }
-            case 'o': {
-                output_dir.assign(optarg);
                 break;
             }
             case '?': {
@@ -271,7 +264,7 @@ int main(int argc, char* argv[]) {
             km_conn_record = km_channel->ConnectSSL();
             key_gen_thd = new KeyGenThd(km_channel, km_conn_record);// 密钥生成
             cipher_similar_thd = new CipherSimilarThd();// 加密相似性检测
-            cache_meta = new CacheMeta(server_channel, server_conn_record);// 缓存管理
+            cache_meta = new CacheMeta();// 缓存管理
             select_comp_thd = new SelectCompThd(cache_meta, method_type);// 压缩选择
             sender_thd = new SenderThd(server_channel, server_conn_record,
                 file_name_hash, cache_meta); // 数据发送
@@ -531,50 +524,43 @@ int main(int argc, char* argv[]) {
             break;
         }
         case DOWNLOAD_OPT: {
+        // 打印下载文件名
             tool::Logging(my_name.c_str(), "download input file name: %s\n",
                 input_file_path.c_str());
-
-            // 计算实际下载输出路径
-            string download_path;
-            if (!output_dir.empty()) {
-                // 从 -i 路径提取文件名，拼到 -o 目录下
-                string base_name = input_file_path.substr(
-                    input_file_path.find_last_of("/\\") + 1);
-                download_path = output_dir + "/" + base_name;
-            } else {
-                download_path = input_file_path;
-            }
-
-            // 1. 创建 DownloadWriterThd（ID隔离：输出文件带 client_id 后缀）
-            download_writer_thd = new DownloadWriterThd(download_path, client_id);
-
-            // 2. 获取断点续传起始位置（0 = 全新下载）
-            uint64_t start_chunk_idx = download_writer_thd->GetStartChunkIdx();
-
-            // 3. 创建 DataRetrieverThd
+            // 创建下载线程对象
             data_retriever_thd = new DataRetrieverThd(server_channel,
                 server_conn_record, file_name_hash, method_type);
+            download_writer_thd = new DownloadWriterThd(input_file_path);
+        //- DataRetrieverThd：数据检索线程，负责：
+        //- 与存储服务器建立安全连接
+        //- 发送下载请求
+        //- 接收加密数据块
+        //- 解密数据块
+        //-DownloadWriterThd：文件写入线程，负责：
+        //- 将解密后的数据块写入本地文件
+        //- 维护文件写入顺序
 
-            // 消息队列创建
+
+
+            //消息队列创建
             AbsMQ<Retriever2Writer_t>* retriever_mq =
                 retriever_2_writer_mq_factory.CreateMQ(MQ_TYPE, CHUNK_HASH_SIZE);
 
-            // 4. 下载登录认证（传入 start_chunk_idx 支持断点续传）
-            data_retriever_thd->DownloadLogin(file_name_hash, start_chunk_idx);
-
-            // 5. 传递 recipe_head 给 writer（用于进度文件初始化）
-            download_writer_thd->SetFileRecipeHead(
-                data_retriever_thd->GetRecipeHead(), file_name_hash);
+            // 下载登录认证
+            data_retriever_thd->DownloadLogin(file_name_hash);
 
             // 启动下载流水线
+            // 启动数据检索线程
             tmp_thd = new boost::thread(thd_attrs, boost::bind(&DataRetrieverThd::Run,
                 data_retriever_thd, retriever_mq));
             thd_list.push_back(tmp_thd);
+            // 启动文件写入线程
             tmp_thd = new boost::thread(thd_attrs, boost::bind(&DownloadWriterThd::Run,
                 download_writer_thd, retriever_mq));
             thd_list.push_back(tmp_thd);
 
-            // 时间统计与同步
+
+             //时间统计与同步
             gettimeofday(&stime, NULL);
             for (auto it : thd_list) {
                 it->join();
@@ -587,7 +573,7 @@ int main(int argc, char* argv[]) {
                 delete it;
             }
 
-            // 性能日志记录
+            //性能日志记录
             double speed = static_cast<double>(data_retriever_thd->_total_recv_data_size) /
                 1024.0 / 1024.0 / total_time;
             log_file << total_data_size << ", "
@@ -595,11 +581,12 @@ int main(int argc, char* argv[]) {
                 << input_file_path << ", download, "
                 << data_retriever_thd->_total_recv_data_size << ", "
                 << data_retriever_thd->_total_recv_chunk_num << ", "
-                << "0, " << total_time << ", " << speed << endl;
+                << "0, " << total_time << ", " << speed << endl; 
 
             delete data_retriever_thd;
             delete download_writer_thd;
 
+            // clear the MQ
             delete retriever_mq;
             break;
         }

@@ -25,6 +25,10 @@ AbsDatabase* DatabaseFactory::CreateDatabase(int type, string path) {
             tool::Logging(my_name_.c_str(), "using RocksDB.\n");
             return new RocksdbDatabase(path);
         }
+        case BINARY_TREE_DB: {
+            tool::Logging(my_name_.c_str(), "using Binary Tree DB (full binary tree index).\n");
+            return new BinaryTreeDB(path);
+        }
         default: {
             tool::Logging(my_name_.c_str(), "wrong DB type.\n");
             exit(EXIT_FAILURE);    

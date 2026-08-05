@@ -50,7 +50,6 @@ void Configure::ReadConfig(string path) {
     avg_chunk_size_ = root.get<uint64_t>("Chunker.avg_chunk_size");
     chunker_sliding_win_size_ = root.get<uint64_t>("Chunker.sliding_win_size");
     read_size_ = root.get<uint64_t>("Chunker.read_size");
-    mask = std::stoull(root.get<string>("Chunker.mask"), nullptr, 0);
 
 
 //=====

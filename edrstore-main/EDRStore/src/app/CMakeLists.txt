@@ -8,8 +8,6 @@ add_executable(ClientMain client_main.cc
         ../chunker/odess_simple.cpp
         ../../include/chunker/n_transform.h
         ../chunker/n_transform.cpp
-        ../../include/chunker/n_transform_gear.h
-        ../chunker/n_transform_gear.cc
         ../../include/chunker/new_minhash.h
         ../chunker/new_minhash.cpp
         ../../include/chunker/odess_start.h

@@ -219,11 +219,8 @@ void SenderThd::Run(AbsMQ<SelectComp2Sender_t>* input_MQ) {
                         goto cleanup;
                     }
 
-                    // evict the feature here
-                    cache_meta_->EvictFeature();
-
-                    _cur_version_idx_size = cache_meta_->GetFeatureNum() * (sizeof(uint64_t) +
-                        sizeof(uint32_t));
+                    // record current cache feature count
+                    _cur_version_idx_size = cache_meta_->GetFeatureNum();
 
                     // close the connection
                     server_channel_->Finish(server_conn_record_);

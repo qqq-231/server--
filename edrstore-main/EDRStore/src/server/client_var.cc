@@ -20,13 +20,12 @@
  * @param recipe_path the file recipe path
  */
 ClientVar::ClientVar(uint32_t client_id, SSL* client_ssl,
-    int opt_type, string& recipe_path, uint64_t start_chunk_idx) {
+    int opt_type, string& recipe_path) {
     // basic info
     _client_id = client_id;
     _client_ssl = client_ssl;
     opt_type_ = opt_type;
     recipe_path_ = recipe_path;
-    _start_chunk_idx = start_chunk_idx;
     my_name_ = my_name_ + "-" + to_string(client_id);
 
     // config
@@ -36,7 +35,7 @@ ClientVar::ClientVar(uint32_t client_id, SSL* client_ssl,
     // init the container cache
     _container_cache = new ReadCache(config.GetContainerCacheSize(),
         MAX_CONTAINER_SIZE);
-    _inform_cache = new InformCache(_client_id);
+    _inform_cache = new InformCache();
 
     switch (opt_type_) {
         case UPLOAD_OPT: {

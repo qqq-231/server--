@@ -19,12 +19,14 @@ class CacheCompThd {
     private:
         string my_name_ = "CacheCompThd";
 
+        void RecordSimDist(uint32_t orig_size, uint32_t delta_size);
+
     public:
+        uint64_t _sim_dist[7] = {0}; // [0~0.4)[0.4~0.5)[0.5~0.6)[0.6~0.7)[0.7~0.8)[0.8~0.9)[0.9~1]
         // for delta compression
         uint64_t _total_similar_chunk_num = 0;
         uint64_t _total_similar_data_size = 0;
         uint64_t _total_delta_size = 0;
-        uint64_t _similarity_hist[7] = {0};
 
 #ifdef EDR_BREAKDOWN
         struct timeval _cache_manage_stime;

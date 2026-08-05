@@ -49,9 +49,6 @@ class DataRetrieverThd {
         // for recipe head
         FileRecipeHead_t recipe_head_;
 
-        // 断点续传：起始chunk索引
-        uint64_t start_chunk_idx_ = 0;
-
         // for decryption
         TwoPhaseEnc* two_phase_enc_;
 
@@ -158,18 +155,10 @@ class DataRetrieverThd {
 
         /**
          * @brief download login with the file name hash
-         *
+         * 
          * @param file_name_hash the file name hash
-         * @param start_chunk_idx start chunk index for resume (default 0)
          */
-        void DownloadLogin(uint8_t* file_name_hash, uint64_t start_chunk_idx = 0);
-
-        /**
-         * @brief get the recipe head for progress tracking
-         *
-         * @return FileRecipeHead_t* pointer to recipe head
-         */
-        FileRecipeHead_t* GetRecipeHead() { return &recipe_head_; }
+        void DownloadLogin(uint8_t* file_name_hash);
 };
 
 #endif

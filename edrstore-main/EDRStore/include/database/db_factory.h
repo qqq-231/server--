@@ -16,8 +16,9 @@
 #include "in_mem_db.h"
 #include "leveldb_db.h"
 #include "rocksdb_db.h"
+#include "binary_tree_db.h"
 
-enum DB_TYPE_SET {IN_MEMORY_DB = 0, LEVELDB_DB, ROCKSDB_DB};
+enum DB_TYPE_SET {IN_MEMORY_DB = 0, LEVELDB_DB, ROCKSDB_DB, BINARY_TREE_DB};
 
 class DatabaseFactory {
     private:

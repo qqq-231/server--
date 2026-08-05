@@ -13,16 +13,26 @@
 #define MY_CODEBASE_IN_MEMORY_DB_H
 
 #include "abs_db.h"
+#include "binary_tree_index.h"
 #include <pthread.h>
 
 class InMemoryDatabase : public AbsDatabase {
     protected:
         string my_name_ = "InMemoryDatabase";
-        /*data*/
-        unordered_map<string, string> index_obj_;
 
-        // for lock
+        // ==================== 原哈希表存储（已注释，替换为二叉树存储）====================
+        // /*data*/
+        // unordered_map<string, string> index_obj_;
+        // ==================== 二叉树存储实现（论文方案）====================
+        // 满二叉树索引：叶节点存储块指纹，O(1)哈希映射 tag→叶位置
+        BinaryTreeIndex* tree_index_;
+
+        // 并行地址存储：leaf_position → address value (O(1) 查找)
+        vector<string> addr_store_;
+
+        // for lock (tree_index_ 自带读写锁，addr_store_ 需要独立锁)
         pthread_rwlock_t rwlock_;
+        pthread_rwlock_t addr_rwlock_;
 
     public:
         /**

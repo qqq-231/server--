@@ -159,6 +159,40 @@ void KeyGenThd::AddChunkToBuf(EncFeatureChunk_t& input_chunk,
     return ;
 }
 
+
+
+
+//--------------------====
+void key_seed_to_seed_simple( KeyGenRet_t* key_ret) {
+    // 聚类规则：取前4个字节计算聚类ID
+
+    uint32_t cluster_id = 0;
+    for (int i = 0; i < 4; i++) {
+        cluster_id = (cluster_id << 8) | key_ret->key_seed[i];
+    }
+    cluster_id %= 256;  // 限制在256个聚类内
+
+    // 使用聚类ID生成seed
+    // 相同聚类的内容得到相同的seed
+    for (int i = 0; i < 32; i++) {
+        // 简单算法：聚类ID + 固定模式
+        key_ret->key_seed[i] = static_cast<uint8_t>(cluster_id + i);
+    }
+}
+//=====------
+
+
+
+
+
+
+
+
+
+
+
+
+
 /**
  * @brief process a batch of chunks
  * 
@@ -201,6 +235,11 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
 #endif
 
     KeyGenRet_t* cur_key_ret = (KeyGenRet_t*) recv_buf_.data_buf;
+
+//=================jvl
+   // cur_key_ret->key_seed=cur_key_ret->key_seed^cur_key_ret->key_seed;
+    key_seed_to_seed_simple(cur_key_ret) ;
+
     for (size_t i = 0; i < cur_batch_size; i++) {
         // // copy the key seed
         // memcpy(chunk_buf_[i].key, cur_key_ret->key_seed, CHUNK_HASH_SIZE);
@@ -209,6 +248,9 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
 
         // seed = plaintext fp
         chunk_buf_[i].seed = this->ConvertFp2Val(chunk_buf_[i].feature_chunk.chunk.raw_chunk.fp, CHUNK_HASH_SIZE);
+
+
+
 
 #ifdef EDR_BREAKDOWN
     gettimeofday(&_key_gen_stime, NULL);
