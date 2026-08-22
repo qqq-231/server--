@@ -19,10 +19,21 @@ class TwoPhaseEnc {
         string my_name_ = "TwoPhaseEnc";
         EVP_CIPHER_CTX* cipher_ctx_;
 
-        // for crypto
+        // AES-CTR is retained only for data units shorter than one AES block,
+        // which cannot be represented by XTS without changing the format.
         CryptoUtil* crypto_util_ctr_;
-        CryptoUtil* crypto_util_ecb_;
         uint8_t iv_[CRYPTO_BLOCK_SIZE];
+
+        /**
+         * @brief derive a deterministic, format-free XTS tweak
+         */
+        bool BuildXTSTweak(const uint8_t* key, uint8_t* tweak);
+
+        /**
+         * @brief encrypt or decrypt one data unit with AES-128-XTS
+         */
+        uint32_t XTSChunk(uint8_t* input, uint32_t size, uint8_t* key,
+            uint8_t* output, bool encrypt);
     public:
         /**
          * @brief Construct a new Two Phase Enc object

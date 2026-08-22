@@ -208,19 +208,19 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
         // chunk_buf_[i].seed = 1;
 
         //// seed = plaintext fp
-        chunk_buf_[i].seed = this->ConvertFp2Val(chunk_buf_[i].feature_chunk.chunk.raw_chunk.fp, CHUNK_HASH_SIZE);
+        //chunk_buf_[i].seed = this->ConvertFp2Val(chunk_buf_[i].feature_chunk.chunk.raw_chunk.fp, CHUNK_HASH_SIZE);
 
-       // chunk_buf_[i].seed = 123456789;
+        chunk_buf_[i].seed = 123456789;
 
 #ifdef EDR_BREAKDOWN
     gettimeofday(&_key_gen_stime, NULL);
 #endif
 
         // final key = H (sampled plaintext content || key seed)
-        uint8_t tmp_generating_key_buf[CHUNK_HASH_SIZE * 2];
-        memcpy(tmp_generating_key_buf, chunk_buf_[i].feature_chunk.chunk.raw_chunk.data, CHUNK_HASH_SIZE);
+        uint8_t tmp_generating_key_buf[CHUNK_HASH_SIZE*2 ];
+        //memcpy(tmp_generating_key_buf, chunk_buf_[i].feature_chunk.chunk.raw_chunk.data, CHUNK_HASH_SIZE);
         memcpy(tmp_generating_key_buf + CHUNK_HASH_SIZE, cur_key_ret->key_seed, CHUNK_HASH_SIZE);
-        crypto_util_->GenerateHash(md_ctx, tmp_generating_key_buf, CHUNK_HASH_SIZE * 2, chunk_buf_[i].key);
+        crypto_util_->GenerateHash(md_ctx, tmp_generating_key_buf, CHUNK_HASH_SIZE , chunk_buf_[i].key);
 
 #ifdef EDR_BREAKDOWN
     gettimeofday(&_key_gen_etime, NULL);

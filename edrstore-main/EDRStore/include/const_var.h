@@ -28,7 +28,7 @@ static const uint32_t CHUNK_QUEUE_SIZE = (1024 * 4);// 4096 (块队列容量)
 static const size_t THREAD_STACK_SIZE = (8*1024*1024);// 8MB (线程栈大小)
 
 // sketch & super-feature & feature settings  特征提取系统
-static const uint32_t SUPER_FEATURE_PER_CHUNK = 3; // 3 super-feature per chunk    每个块生成3个超级特征
+static const uint32_t SUPER_FEATURE_PER_CHUNK = 5; // 3 super-feature per chunk    每个块生成3个超级特征
 static const uint32_t FEATURE_PER_SUPER_FEATURE = 4; // 4 features per super-feature  每个超级特征包含4个特征
 static const uint32_t FEATURE_PER_CHUNK = SUPER_FEATURE_PER_CHUNK * 
     FEATURE_PER_SUPER_FEATURE; // 12 total features per chunk  每个块共12个特征
