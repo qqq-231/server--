@@ -30,9 +30,8 @@ DualDedupThd::~DualDedupThd() {
  */
 void DualDedupThd::Run(ClientVar* cur_client) {
     tool::Logging(my_name_.c_str(), "the main thread is running.\n");
-    //// 获取输入输出队列
-    AbsMQ<WrappedChunk_t>* input_MQ = cur_client->_recv_2_dual_mq;// 从DataRecvThd来
-    AbsMQ<WrappedChunk_t>* output_MQ = cur_client->_dual_2_comp_mq;// 到CacheCompThd去
+    AbsMQ<WrappedChunk_t>* input_MQ = cur_client->_recv_2_dual_mq;
+    AbsMQ<WrappedChunk_t>* output_MQ = cur_client->_dual_2_comp_mq;
 
     struct timeval stime;
     struct timeval etime;
@@ -48,37 +47,31 @@ void DualDedupThd::Run(ClientVar* cur_client) {
     WrappedChunk_t output_data;
 
     while(true) {
-        // extract a chunk from the MQ   // 检查是否完成
+        // extract a chunk from the MQ
         if (input_MQ->_done && input_MQ->IsEmpty()) {
             tool::Logging(my_name_.c_str(), "no chunk in the MQ, all jobs are done.\n");
             break;
         }
 
-
-
-        // 从队列中取出数据块
-        // 根据数据块状态进行处理
-        // 处理不同类型的块
         if(input_MQ->Pop(input_data)) {
             switch (input_data.info.stat) {
                 case CHUNK_PAIR: {
-                    // perform deduplication   执行去重检测
+                    // perform deduplication
 #ifdef EDR_BREAKDOWN
                 gettimeofday(&_dedup_stime, NULL);
 #endif
-                        // 1. 执行去重检测
                     dedup_util_->DetectDuplicate(&input_data.info);
 #ifdef EDR_BREAKDOWN
                 gettimeofday(&_dedup_etime, NULL);
                 _total_dedup_time += tool::GetTimeDiff(_dedup_stime, _dedup_etime);
 #endif
-                        // 2. 如果是唯一块，进一步处理
+
                     if(input_data.info.stat == UNIQUE_CHUNK) {
-                        input_data.info.stat = UNIQUE_CHUNK_AFTER_CACHE;// 标记为缓存后的唯一块
+                        input_data.info.stat = UNIQUE_CHUNK_AFTER_CACHE;
 #ifdef EDR_BREAKDOWN
                     gettimeofday(&_cipher_feature_stime, NULL);
 #endif
-                        // compute the feature here   // 3. 提取特征（用于后续的相似性匹配）
+                        // compute the feature here
                         finesse_util_->ExtractFeature(cur_client->_rabin_ctx,
                             input_data.data, input_data.info.size,
                             input_data.info.features);
@@ -88,7 +81,6 @@ void DualDedupThd::Run(ClientVar* cur_client) {
                         _cipher_feature_stime, _cipher_feature_etime);
                     _total_cipher_feature_data_size += input_data.info.size;
 #endif
-                        // 4. 推送到下一阶段
                         output_MQ->Push(input_data);
 
                         // update stat
@@ -98,22 +90,31 @@ void DualDedupThd::Run(ClientVar* cur_client) {
                     
                     break;
                 }
+                case UNIQUE_CHUNK: {
+                    // m=0 path: DataRecvThd already did dedup + feature extraction,
+                    // so just pass through and do NOT change anything.
+                    output_MQ->Push(input_data);
+
+                    // update stat for server log
+                    _total_unique_chunk_num++;
+                    _total_unique_data_size += input_data.info.size;
+                    break;
+                }
+
                 case SINGLE_CHUNK: {
-                    // perform deduplication    执行去重检测
+                    // perform deduplication
 #ifdef EDR_BREAKDOWN
                 gettimeofday(&_dedup_stime, NULL);
 #endif
-                        // 1. 执行去重检测
                     dedup_util_->DetectDuplicate(&input_data.info);
 #ifdef EDR_BREAKDOWN
                 gettimeofday(&_dedup_etime, NULL);
                 _total_dedup_time += tool::GetTimeDiff(_dedup_stime, _dedup_etime);
 #endif
 
-                        // 2. 如果是唯一块，推送到下一阶段
                     if(input_data.info.stat == UNIQUE_CHUNK) {
                         output_MQ->Push(input_data);
-                        // update stat // 更新统计
+                        // update stat
                         _total_unique_chunk_num++;
                         _total_unique_data_size += input_data.info.size;
                     }
@@ -121,12 +122,12 @@ void DualDedupThd::Run(ClientVar* cur_client) {
                     break;
                 }
                 case CACHE_INSERT_CHUNK: {
-                    // directly pass to the next thd   // 直接传递给下一阶段（CacheCompThd）
+                    // directly pass to the next thd
                     output_MQ->Push(input_data);
                     break;
                 }
                 case CACHE_EVICT_CHUNK: {
-                    // directly pass to the next thd   // 直接传递给下一阶段（CacheCompThd）
+                    // directly pass to the next thd
                     output_MQ->Push(input_data);
                     break;
                 }

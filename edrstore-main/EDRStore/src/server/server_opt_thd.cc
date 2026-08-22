@@ -11,6 +11,8 @@
 
 #include "../../include/server/server_opt_thd.h"
 
+#include <filesystem>
+
 /**
  * @brief Construct a new ServerOptThd object
  * 
@@ -45,19 +47,7 @@ ServerOptThd::ServerOptThd(SSLConnection* server_channel,
  */
 ServerOptThd::~ServerOptThd() {
     this->StoreStat();
-    delete storage_core_;
-
-    delete data_recv_thd_;
-    delete cache_comp_thd_;
-    delete data_writer_thd_;
-    delete dual_dedup_thd_;
-
-    delete data_reader_thd_;
-    delete data_decode_thd_;
-
-    for (auto it : client_lck_idx_) {
-        delete it.second;
-    }
+    const RecipeSpaceStat recipe_space = this->CollectRecipeSpace();
     fprintf(stderr, "========ServerOptThd Info========\n");
     fprintf(stderr, "total recv upload req: %lu\n", 
         _total_upload_opt_num);
@@ -99,7 +89,72 @@ ServerOptThd::~ServerOptThd() {
         cache_comp_thd_->_total_similar_chunk_num,
         data_writer_thd_->_total_similar_chunk_num,
         cache_comp_thd_->_total_similar_chunk_num + data_writer_thd_->_total_similar_chunk_num);
+    fprintf(stderr, "--------Recipe Space--------\n");
+    fprintf(stderr, "file recipe files: %lu\n", recipe_space.file_recipe_count);
+    fprintf(stderr, "file recipe size:  %lu B (%.2lf MiB)\n",
+        recipe_space.file_recipe_bytes,
+        static_cast<double>(recipe_space.file_recipe_bytes) / 1024.0 / 1024.0);
+    fprintf(stderr, "key recipe files:  %lu\n", recipe_space.key_recipe_count);
+    fprintf(stderr, "key recipe size:   %lu B (%.2lf MiB)\n",
+        recipe_space.key_recipe_bytes,
+        static_cast<double>(recipe_space.key_recipe_bytes) / 1024.0 / 1024.0);
+    fprintf(stderr, "total recipe size: %lu B (%.2lf MiB)\n",
+        recipe_space.file_recipe_bytes + recipe_space.key_recipe_bytes,
+        static_cast<double>(recipe_space.file_recipe_bytes +
+            recipe_space.key_recipe_bytes) / 1024.0 / 1024.0);
+    fprintf(stderr, "container + file recipe: %lu B\n",
+        storage_core_->_write_data_size + recipe_space.file_recipe_bytes);
+    fprintf(stderr, "container + all recipes: %lu B\n",
+        storage_core_->_write_data_size + recipe_space.file_recipe_bytes +
+            recipe_space.key_recipe_bytes);
     fprintf(stderr, "=================================\n");
+
+    // Keep all counters alive until the final report has been emitted.
+    delete storage_core_;
+    delete data_recv_thd_;
+    delete cache_comp_thd_;
+    delete data_writer_thd_;
+    delete dual_dedup_thd_;
+    delete data_reader_thd_;
+    delete data_decode_thd_;
+
+    for (auto it : client_lck_idx_) {
+        delete it.second;
+    }
+}
+
+ServerOptThd::RecipeSpaceStat ServerOptThd::CollectRecipeSpace() const {
+    RecipeSpaceStat result;
+    const std::string file_suffix = config.GetRecipeSuffix();
+    const std::string key_suffix = config.GetKeyRecipeSuffix();
+    std::error_code error;
+    std::filesystem::directory_iterator iterator(
+        config.GetRecipeRootPath(), error);
+    const std::filesystem::directory_iterator end;
+
+    while (!error && iterator != end) {
+        const std::filesystem::directory_entry& entry = *iterator;
+        std::error_code entry_error;
+        if (entry.is_regular_file(entry_error) && !entry_error) {
+            const std::string name = entry.path().filename().string();
+            const uint64_t bytes = entry.file_size(entry_error);
+            if (!entry_error) {
+                if (name.size() >= file_suffix.size() &&
+                    name.compare(name.size() - file_suffix.size(),
+                        file_suffix.size(), file_suffix) == 0) {
+                    result.file_recipe_bytes += bytes;
+                    result.file_recipe_count++;
+                } else if (name.size() >= key_suffix.size() &&
+                    name.compare(name.size() - key_suffix.size(),
+                        key_suffix.size(), key_suffix) == 0) {
+                    result.key_recipe_bytes += bytes;
+                    result.key_recipe_count++;
+                }
+            }
+        }
+        iterator.increment(error);
+    }
+    return result;
 }
 
 /**
@@ -539,6 +594,7 @@ void ServerOptThd::StoreStat() {
  * @param total_cache_size total cache size
  */
 void ServerOptThd::PrintClientLog(uint64_t total_cache_size) {
+    const RecipeSpaceStat recipe_space = this->CollectRecipeSpace();
     ofstream server_log_hdl;
     bool is_first_server_log = !(tool::FileExist(server_log_name_));
     server_log_hdl.open(server_log_name_, ios_base::app | ios_base::out);
@@ -552,7 +608,9 @@ void ServerOptThd::PrintClientLog(uint64_t total_cache_size) {
                 << "similar size (l), " << "similar chunk num (l), "
                 << "delta size (l), " << "similar size (g), "
                 << "similar chunk num (g), " << "delta size (g), "
-                << "storage size, cache size" << endl;
+                << "storage size, cache size, "
+                << "file recipe size, key recipe size, total recipe size"
+                << endl;
         }
         server_log_hdl << data_recv_thd_->_total_logical_data_size << ", " 
             << data_recv_thd_->_total_logical_chunk_num << ", "
@@ -564,8 +622,12 @@ void ServerOptThd::PrintClientLog(uint64_t total_cache_size) {
             << data_writer_thd_->_total_similar_data_size << ", " 
             << data_writer_thd_->_total_similar_chunk_num << ", " 
             << data_writer_thd_->_total_delta_size << ", " 
-            << storage_core_->_write_data_size << ", " 
-            << total_cache_size << endl;
+            << storage_core_->_write_data_size << ", "
+            << total_cache_size << ", "
+            << recipe_space.file_recipe_bytes << ", "
+            << recipe_space.key_recipe_bytes << ", "
+            << recipe_space.file_recipe_bytes + recipe_space.key_recipe_bytes
+            << endl;
         server_log_hdl.close();
     }
 

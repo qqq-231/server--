@@ -39,6 +39,13 @@ extern Configure config;
 
 class ServerOptThd {
     private:
+        struct RecipeSpaceStat {
+            uint64_t file_recipe_bytes = 0;
+            uint64_t key_recipe_bytes = 0;
+            uint64_t file_recipe_count = 0;
+            uint64_t key_recipe_count = 0;
+        };
+
         string my_name_ = "ServerOptThd";
         string server_log_name_ = "server-log";
         string persist_stat_name_ = "persist-stat";
@@ -102,6 +109,13 @@ class ServerOptThd {
          * 
          */
         void StoreStat();
+
+        /**
+         * @brief collect file/key recipe space from the configured recipe directory
+         *
+         * @return RecipeSpaceStat recipe file counts and byte sizes
+         */
+        RecipeSpaceStat CollectRecipeSpace() const;
 
         /**
          * @brief print the info of curClient

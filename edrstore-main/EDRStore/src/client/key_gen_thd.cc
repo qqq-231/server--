@@ -207,8 +207,10 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
         // // chunk_buf_[i].seed = cur_key_ret->seed;
         // chunk_buf_[i].seed = 1;
 
-        // seed = plaintext fp
+        //// seed = plaintext fp
         chunk_buf_[i].seed = this->ConvertFp2Val(chunk_buf_[i].feature_chunk.chunk.raw_chunk.fp, CHUNK_HASH_SIZE);
+
+       // chunk_buf_[i].seed = 123456789;
 
 #ifdef EDR_BREAKDOWN
     gettimeofday(&_key_gen_stime, NULL);
@@ -230,13 +232,23 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
         gettimeofday(&_two_enc_stime, NULL);
 #endif
 
-        // encrypt the chunk here
+       // encrypt the chunk here
         chunk_buf_[i].enc_size = two_phase_enc_->TwoPhaseEncChunk(
             chunk_buf_[i].feature_chunk.chunk.raw_chunk.data,
             chunk_buf_[i].feature_chunk.chunk.raw_chunk.size,
             chunk_buf_[i].key,
             chunk_buf_[i].enc_data
         );
+
+        
+//                       chunk_buf_[i].enc_size =
+//     chunk_buf_[i].feature_chunk.chunk.raw_chunk.size;
+
+// memcpy(
+//     chunk_buf_[i].enc_data,
+//     chunk_buf_[i].feature_chunk.chunk.raw_chunk.data,
+//     chunk_buf_[i].feature_chunk.chunk.raw_chunk.size
+// );
 
 #ifdef EDR_BREAKDOWN
         gettimeofday(&_two_enc_etime, NULL);
