@@ -1,0 +1,27 @@
+# Safe-4 baseline, frozen before random persistent KM root credentials
+dataset=/data/shared_datasets/tar/emacs/emacs-22.1.tar
+dataset_sha256=ff2557b6925f68f2fbcefd4e2b6017fcc364ec567b3b5e90a5df13af84a8cffe
+client_arguments=-t u -i /data/shared_datasets/tar/emacs/emacs-22.1.tar -m 2 -c 1
+logical_size=73473761
+logical_chunk_num=33595
+unique_size=71084924
+unique_chunk_num=33012
+similar_size_l=98724
+similar_chunk_num_l=24
+delta_chunk_num_l=24
+delta_size_l=5456
+similar_size_g=2543
+similar_chunk_num_g=1
+delta_chunk_num_g=1
+delta_size_g=367
+similar_chunk_num_total=25
+delta_chunk_num_total=25
+delta_size_total=5823
+storage_size=70989480
+cache_size=136069879
+file_recipe_size=1075056
+key_recipe_size=1075040
+total_recipe_size=2150096
+upload_status=0
+download_status=0
+download_cmp_status=0

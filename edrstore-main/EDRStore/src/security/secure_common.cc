@@ -8,11 +8,13 @@
 #include <algorithm>
 #include <cerrno>
 #include <climits>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
 #include <limits>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 namespace edrstore::security {
@@ -110,6 +112,20 @@ MasterKey::MasterKey() = default;
 
 MasterKey::~MasterKey() {
     OPENSSL_cleanse(key_.data(), key_.size());
+    if (locked_) {
+        munlock(key_.data(), key_.size());
+    }
+}
+
+void MasterKey::TryLockMemory() {
+    if (locked_) return;
+    if (mlock(key_.data(), key_.size()) == 0) {
+        locked_ = true;
+        return;
+    }
+    std::fprintf(stderr,
+        "SECURITY WARNING: mlock failed for the 32-byte master-key buffer: %s\n",
+        std::strerror(errno));
 }
 
 bool MasterKey::LoadOrCreate(const std::filesystem::path& path,
@@ -129,6 +145,7 @@ bool MasterKey::LoadOrCreate(const std::filesystem::path& path,
     if (std::filesystem::exists(path, fs_error)) {
         if (fs_error || !ReadExactKeyFile(path, key_, error)) return false;
         initialized_ = true;
+        TryLockMemory();
         return true;
     }
     if (fs_error) {
@@ -148,6 +165,7 @@ bool MasterKey::LoadOrCreate(const std::filesystem::path& path,
         OPENSSL_cleanse(generated.data(), generated.size());
         if (open_error == EEXIST && ReadExactKeyFile(path, key_, error)) {
             initialized_ = true;
+            TryLockMemory();
             return true;
         }
         error = "cannot create master key: " + path.string();
@@ -166,6 +184,7 @@ bool MasterKey::LoadOrCreate(const std::filesystem::path& path,
     OPENSSL_cleanse(generated.data(), generated.size());
     SyncDirectory(path);
     initialized_ = true;
+    TryLockMemory();
     return true;
 }
 

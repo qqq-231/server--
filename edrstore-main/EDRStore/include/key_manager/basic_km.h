@@ -19,6 +19,7 @@
 #include "../crypto/crypto_util.h"
 #include "../database/db_factory.h"
 #include "../reduction/similar_policy.h"
+#include "../security/km_master_key.h"
 
 extern Configure config;
 
@@ -35,6 +36,8 @@ class BasicKM {
         CryptoUtil* crypto_util_;
         uint8_t global_secret_[CHUNK_HASH_SIZE];
         uint8_t global_padding_secret_[CHUNK_HASH_SIZE];
+        bool global_secret_locked_ = false;
+        bool global_padding_secret_locked_ = false;
 
         AbsDatabase* feature_2_key_index_;
 
@@ -60,7 +63,8 @@ class BasicKM {
          * @param km_channel the key generation channel
          * @param feature_2_key_index the feature index
          */
-        BasicKM(SSLConnection* km_channel, AbsDatabase* feature_2_key_index);
+        BasicKM(SSLConnection* km_channel, AbsDatabase* feature_2_key_index,
+            const edrstore::security::KMMasterKey& km_master);
 
         /**
          * @brief Destroy the Basic KM object

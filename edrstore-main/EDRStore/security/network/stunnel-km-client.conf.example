@@ -1,0 +1,15 @@
+; Outer mTLS client tunnel. ClientMain connects to 127.0.0.1:16667.
+foreground = yes
+client = yes
+debug = notice
+output = @EDRSTORE_ROOT@/security/audit/stunnel-km-client.log
+CAfile = @OUTER_CA_CERT@
+cert = @OUTER_CLIENT_CERT@
+key = @OUTER_CLIENT_KEY@
+verify = 2
+sslVersionMin = TLSv1.2
+
+[edrstore-km]
+accept = 127.0.0.1:16667
+connect = @KM_HOST@:17667
+checkHost = @KM_CERTIFICATE_HOSTNAME@

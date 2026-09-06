@@ -15,6 +15,8 @@
 // to receive the interrupt
 #include <signal.h>
 #include <boost/thread/thread.hpp>
+#include <filesystem>
+#include <limits.h>
 
 using namespace std;
 
@@ -27,12 +29,27 @@ vector<boost::thread*> th_list;
 DatabaseFactory db_factory;
 AbsDatabase* feature_2_key_index;
 BasicKM* km_;
+edrstore::security::KMMasterKey km_master;
 
 string my_name = "KeyManager";
 
 void Usage() {
     fprintf(stderr, "./%s\n", my_name.c_str());
     return ;
+}
+
+string ResolveKMMasterPath() {
+    const char* configured_path = getenv("EDRSTORE_KM_MASTER_KEY");
+    if (configured_path != nullptr && configured_path[0] != '\0') {
+        return configured_path;
+    }
+    char executable_path[PATH_MAX + 1] = {0};
+    const ssize_t size = readlink("/proc/self/exe", executable_path,
+        PATH_MAX);
+    if (size <= 0) return "security/km/km_master.bin";
+    executable_path[size] = '\0';
+    return (std::filesystem::path(executable_path).parent_path().parent_path() /
+        "security" / "km" / "km_master.bin").string();
 }
 
 void CTRLC(int s) {
@@ -57,8 +74,21 @@ void CTRLC(int s) {
 }
 
 int main(int argc, char* argv[]) {
+    if (argc != 1) {
+        Usage();
+        return EXIT_FAILURE;
+    }
  
     // ------- main process --------
+
+    string km_master_error;
+    if (!km_master.LoadExisting(ResolveKMMasterPath(), km_master_error)) {
+        cerr << "SECURITY ERROR: KeyManager credential load failed: "
+             << km_master_error << endl;
+        return EXIT_FAILURE;
+    }
+    tool::Logging(my_name.c_str(),
+        "persistent root credential loaded successfully.\n");
 
     struct sigaction sig_int_hdl;
     sig_int_hdl.sa_handler = SIG_IGN;
@@ -78,7 +108,7 @@ int main(int argc, char* argv[]) {
     feature_2_key_index = db_factory.CreateDatabase(IN_MEMORY_DB, config.GetFeature2KeyDBName());
     km_channel = new SSLConnection(config.GetKeyServerIP(), config.GetKeyServerPort(),
         IN_SERVER_SIDE);
-    km_ = new BasicKM(km_channel, feature_2_key_index);
+    km_ = new BasicKM(km_channel, feature_2_key_index, km_master);
 
     /**
      * |---------------------------------------|

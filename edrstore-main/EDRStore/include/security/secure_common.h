@@ -28,8 +28,10 @@ class MasterKey {
         std::array<uint8_t, kSha256Size>& output, std::string& error) const;
 
   private:
+    void TryLockMemory();
     std::array<uint8_t, kMasterKeySize> key_{};
     bool initialized_ = false;
+    bool locked_ = false;
 };
 
 bool ReadFile(const std::filesystem::path& path, std::vector<uint8_t>& data,

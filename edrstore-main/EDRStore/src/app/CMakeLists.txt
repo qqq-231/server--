@@ -1,4 +1,4 @@
-add_executable(KeyManager km_main.cc)
+add_executable(KeyManager km_main.cc ../security/km_master_key.cc)
 target_link_libraries(KeyManager ${KM_OBJ} ${LINK_OBJ})
 add_executable(ClientMain client_main.cc
         ../../include/chunker/gear_poly.h

@@ -1,0 +1,23 @@
+[Unit]
+Description=EDRStore client job (hardened legacy binary)
+After=network.target
+
+[Service]
+Type=oneshot
+User=edr-client
+Group=edr-client
+WorkingDirectory=@CLIENT_RUNTIME_DIR@
+ExecStart=@EDRSTORE_ROOT@/security/harden_runtime.sh client @EDRSTORE_ROOT@/bin/ClientMain.safe3-baseline @CLIENT_ARGUMENTS@
+LimitCORE=0
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=@CLIENT_RUNTIME_DIR@ @DATASET_PATH@ @EDRSTORE_ROOT@/security/client @EDRSTORE_ROOT@/security/audit

@@ -30,3 +30,8 @@ add_executable(FileIntegrityTool
     file_integrity_tool.cc
     "${EDRSTORE_ROOT}/src/security/file_integrity.cc")
 target_link_libraries(FileIntegrityTool PRIVATE EDRSTORE_SECURITY_COMMON)
+
+add_executable(KMMasterKeyTool
+    km_master_key_tool.cc
+    "${EDRSTORE_ROOT}/src/security/km_master_key.cc")
+target_link_libraries(KMMasterKeyTool PRIVATE OpenSSL::Crypto)

@@ -11,6 +11,9 @@
 
 #include "../../include/key_manager/basic_km.h"
 
+#include <openssl/crypto.h>
+#include <sys/mman.h>
+
 /**
  * @brief Construct a new Basic KM object
  * 
@@ -18,15 +21,29 @@
  * @param feature_2_key_index the feature index
  */
 BasicKM::BasicKM(SSLConnection* km_channel, 
-    AbsDatabase* feature_2_key_index) {
+    AbsDatabase* feature_2_key_index,
+    const edrstore::security::KMMasterKey& km_master) {
     km_channel_ = km_channel;
     feature_2_key_index_ = feature_2_key_index;
 
     send_chunk_batch_size_ = config.GetSendChunkBatchSize();
-    memset(global_secret_, 1, CHUNK_HASH_SIZE);
+    static_assert(CHUNK_HASH_SIZE ==
+        edrstore::security::KMMasterKey::kSecretSize);
+    memcpy(global_secret_, km_master.GlobalSecret(), CHUNK_HASH_SIZE);
+    memcpy(global_padding_secret_, km_master.PaddingSecret(), CHUNK_HASH_SIZE);
+    if (mlock(global_secret_, sizeof(global_secret_)) == 0) {
+        global_secret_locked_ = true;
+    } else {
+        tool::Logging(my_name_.c_str(),
+            "SECURITY WARNING: cannot lock credential buffer A.\n");
+    }
+    if (mlock(global_padding_secret_, sizeof(global_padding_secret_)) == 0) {
+        global_padding_secret_locked_ = true;
+    } else {
+        tool::Logging(my_name_.c_str(),
+            "SECURITY WARNING: cannot lock credential buffer B.\n");
+    }
     crypto_util_ = new CryptoUtil(CIPHER_TYPE, HASH_TYPE);
-
-    memset(global_padding_secret_, 2, CHUNK_HASH_SIZE);
 
     similar_policy_ = new SimilarPolicy();
 }
@@ -36,6 +53,14 @@ BasicKM::BasicKM(SSLConnection* km_channel,
  * 
  */
 BasicKM::~BasicKM() {
+    OPENSSL_cleanse(global_secret_, sizeof(global_secret_));
+    OPENSSL_cleanse(global_padding_secret_, sizeof(global_padding_secret_));
+    if (global_secret_locked_) {
+        munlock(global_secret_, sizeof(global_secret_));
+    }
+    if (global_padding_secret_locked_) {
+        munlock(global_padding_secret_, sizeof(global_padding_secret_));
+    }
     delete crypto_util_;
     delete similar_policy_;
     fprintf(stderr, "========BasicKM Info========\n");

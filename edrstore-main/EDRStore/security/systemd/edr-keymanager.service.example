@@ -1,0 +1,28 @@
+[Unit]
+Description=EDRStore KeyManager (hardened legacy binary)
+After=network.target
+
+[Service]
+Type=simple
+User=edr-km
+Group=edr-km
+WorkingDirectory=@KM_RUNTIME_DIR@
+ExecStart=@EDRSTORE_ROOT@/security/harden_runtime.sh km @EDRSTORE_ROOT@/bin/KeyManager.safe3-baseline
+LimitCORE=0
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ReadWritePaths=@KM_RUNTIME_DIR@ @EDRSTORE_ROOT@/security/km @EDRSTORE_ROOT@/security/audit
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

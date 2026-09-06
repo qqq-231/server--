@@ -1,0 +1,27 @@
+[Unit]
+Description=EDRStore storage server (hardened legacy binary)
+After=network.target
+
+[Service]
+Type=simple
+User=edr-server
+Group=edr-server
+WorkingDirectory=@SERVER_RUNTIME_DIR@
+ExecStart=@EDRSTORE_ROOT@/security/harden_runtime.sh server @EDRSTORE_ROOT@/bin/ServerMain.safe3-baseline
+LimitCORE=0
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ReadWritePaths=@SERVER_RUNTIME_DIR@ @EDRSTORE_ROOT@/security/storage @EDRSTORE_ROOT@/security/audit
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

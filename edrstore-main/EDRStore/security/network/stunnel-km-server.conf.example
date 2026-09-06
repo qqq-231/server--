@@ -1,0 +1,15 @@
+; Outer mTLS server tunnel. The legacy KeyManager listens only behind the
+; firewall on 127.0.0.1:16668 in a separate runtime configuration.
+foreground = yes
+client = no
+debug = notice
+output = @EDRSTORE_ROOT@/security/audit/stunnel-km-server.log
+CAfile = @OUTER_CA_CERT@
+cert = @OUTER_KM_CERT@
+key = @OUTER_KM_KEY@
+verify = 2
+sslVersionMin = TLSv1.2
+
+[edrstore-km]
+accept = 0.0.0.0:17667
+connect = 127.0.0.1:16668
