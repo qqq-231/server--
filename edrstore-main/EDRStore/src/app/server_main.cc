@@ -16,6 +16,7 @@
 
 // for the interrupt
 #include <signal.h>
+#include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/thread/thread.hpp>
 
 using namespace std;
@@ -28,10 +29,31 @@ AbsDatabase* fp_2_addr_db;
 AbsDatabase* feature_2_fp_db;
 vector<boost::thread*> thd_list;
 
+// Release large per-request allocations promptly.  EDRStore is linked with
+// jemalloc in release builds; limiting the arena count and enabling short
+// background decay prevents destroyed upload queues from remaining resident
+// across a long sequence of client connections.
+extern "C" {
+const char* malloc_conf =
+    "background_thread:true,narenas:4,dirty_decay_ms:1000,muzzy_decay_ms:1000";
+}
+
 // the server main thread
 ServerOptThd* server_opt_thd;
 
 string my_name = "EDRServer";
+
+void ReapCompletedThreads() {
+    auto it = thd_list.begin();
+    while (it != thd_list.end()) {
+        if ((*it)->timed_join(boost::posix_time::milliseconds(0))) {
+            delete *it;
+            it = thd_list.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
 
 void Usage() {
     fprintf(stderr, "Usage: %s\n", 
@@ -50,6 +72,7 @@ void CTRLC(int s) {
     for (auto it : thd_list) {
         delete it;
     }
+    thd_list.clear();
     delete server_opt_thd;
     tool::Logging(my_name.c_str(), "clear all server threads.\n");
 
@@ -99,6 +122,10 @@ int main(int argc, char* argv[]) {
      */
 
     while (true) {
+        // A completed boost::thread retains its native thread resources until
+        // it is joined.  Reap it before accepting the next sequential upload
+        // instead of keeping every historical connection until Ctrl+C.
+        ReapCompletedThreads();
         tool::Logging(my_name.c_str(), "waiting the req from the client.\n");
         SSL* client_ssl = server_channel->ListenSSL().second;
         tmp_thd = new boost::thread(attrs, boost::bind(&ServerOptThd::Run,

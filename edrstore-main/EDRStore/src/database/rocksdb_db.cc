@@ -41,10 +41,12 @@ bool RocksdbDatabase::OpenDB(string db_name) {
     options_.create_if_missing = true;
     options_.IncreaseParallelism(16);
     options_.OptimizeLevelStyleCompaction();
-    options_.OptimizeForPointLookup(4096);
-    options_.db_write_buffer_size = static_cast<size_t>(128) << 20;
-    options_.max_write_buffer_number = 5;
-    options_.min_write_buffer_number_to_merge = 3;
+    // OptimizeForPointLookup takes MiB.  4096 therefore allowed a 4 GiB
+    // cache for every short-lived InformCache database.
+    options_.OptimizeForPointLookup(256);
+    options_.db_write_buffer_size = static_cast<size_t>(64) << 20;
+    options_.max_write_buffer_number = 2;
+    options_.min_write_buffer_number_to_merge = 1;
     options_.info_log_level = static_cast<rocksdb::InfoLogLevel>(4); // FATAL_LEVEL
     options_.compression = rocksdb::CompressionType::kNoCompression;
 

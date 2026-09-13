@@ -50,7 +50,10 @@ bool LeveldbDatabase::OpenDB(string db_name) {
     db_name_ = db_name;
 
     options_.create_if_missing = true;
-    options_.block_cache = leveldb::NewLRUCache(2 << 30); // 256MB cache
+    // The old expression `2 << 30` allocated a 2 GiB cache (not 256 MiB).
+    // Keep each LevelDB instance explicitly bounded to 256 MiB.
+    options_.block_cache = leveldb::NewLRUCache(
+        static_cast<size_t>(256) << 20);
     leveldb::Status status = leveldb::DB::Open(options_, db_name_,
         &level_db_obj_);
     assert(status.ok());

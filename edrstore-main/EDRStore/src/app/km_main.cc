@@ -14,6 +14,7 @@
 
 // to receive the interrupt
 #include <signal.h>
+#include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/thread/thread.hpp>
 #include <filesystem>
 #include <limits.h>
@@ -25,6 +26,11 @@ Configure config("config.json");
 SSLConnection* km_channel;
 vector<boost::thread*> th_list;
 
+extern "C" {
+const char* malloc_conf =
+    "background_thread:true,narenas:4,dirty_decay_ms:1000,muzzy_decay_ms:1000";
+}
+
 // the key manager main thread
 DatabaseFactory db_factory;
 AbsDatabase* feature_2_key_index;
@@ -32,6 +38,18 @@ BasicKM* km_;
 edrstore::security::KMMasterKey km_master;
 
 string my_name = "KeyManager";
+
+void ReapCompletedThreads() {
+    auto it = th_list.begin();
+    while (it != th_list.end()) {
+        if ((*it)->timed_join(boost::posix_time::milliseconds(0))) {
+            delete *it;
+            it = th_list.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
 
 void Usage() {
     fprintf(stderr, "./%s\n", my_name.c_str());
@@ -62,6 +80,7 @@ void CTRLC(int s) {
     for (auto it : th_list) {
         delete it;
     }
+    th_list.clear();
 
     delete km_;
     tool::Logging(my_name.c_str(), "clear all key manager threads.\n");
@@ -117,6 +136,7 @@ int main(int argc, char* argv[]) {
      */
 
     while (true) {
+        ReapCompletedThreads();
         tool::Logging(my_name.c_str(), "waiting the request from the client.\n");
         SSL* client_ssl = km_channel->ListenSSL().second;
         tmp_th = new boost::thread(attrs, boost::bind(&BasicKM::Run,

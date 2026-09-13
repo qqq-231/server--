@@ -19,17 +19,17 @@
     },
     "StorageServer": {
         "ip": "127.0.0.1",
-        "port": 16666,
+        "port": 17777,
         "recipe_root_path": "Recipes/",
         "container_root_path": "Containers/",
         "cache_root_path": "Cache/",
         "fp_2_chunk_db": "fp_chunk_db",
         "feature_2_fp_db": "feature_fp_db",
-        "container_cache_size": 512
+        "container_cache_size": 128
     },
     "KeyServer": {
         "ip": "127.0.0.1",
-        "port": 16667,
+        "port": 17778,
         "feature_2_key_db": "feature_key_db"
     },
     "Client": {

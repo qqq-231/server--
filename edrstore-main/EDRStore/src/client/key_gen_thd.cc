@@ -216,11 +216,24 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
     gettimeofday(&_key_gen_stime, NULL);
 #endif
 
-        // final key = H (sampled plaintext content || key seed)
-        uint8_t tmp_generating_key_buf[CHUNK_HASH_SIZE*2 ];
-        //memcpy(tmp_generating_key_buf, chunk_buf_[i].feature_chunk.chunk.raw_chunk.data, CHUNK_HASH_SIZE);
-        memcpy(tmp_generating_key_buf + CHUNK_HASH_SIZE, cur_key_ret->key_seed, CHUNK_HASH_SIZE);
-        crypto_util_->GenerateHash(md_ctx, tmp_generating_key_buf, CHUNK_HASH_SIZE , chunk_buf_[i].key);
+        // Derive the final XTS key only from the KeyManager-provided group seed.
+        // Chunks assigned to the same similarity group therefore continue to use
+        // the same encryption key, preserving the existing similarity/compression
+        // behaviour.  The fixed domain label separates this key from other uses
+        // of key_seed.  Do not add plaintext content here: doing so would give
+        // similar chunks different XTS keys and reduce delta-compression quality.
+        static const uint8_t kXtsKeyDomain[] =
+            "EDRStore-XTS-data-key-v1";
+        uint8_t tmp_generating_key_buf[
+            sizeof(kXtsKeyDomain) - 1 + CHUNK_HASH_SIZE];
+        memcpy(tmp_generating_key_buf, kXtsKeyDomain,
+            sizeof(kXtsKeyDomain) - 1);
+        memcpy(tmp_generating_key_buf + sizeof(kXtsKeyDomain) - 1,
+            cur_key_ret->key_seed, CHUNK_HASH_SIZE);
+        crypto_util_->GenerateHash(md_ctx, tmp_generating_key_buf,
+            sizeof(tmp_generating_key_buf), chunk_buf_[i].key);
+        OPENSSL_cleanse(tmp_generating_key_buf,
+            sizeof(tmp_generating_key_buf));
 
 #ifdef EDR_BREAKDOWN
     gettimeofday(&_key_gen_etime, NULL);
