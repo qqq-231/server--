@@ -94,7 +94,7 @@ class ClientVar {
 
         uint64_t _start_chunk_idx; // 断点续传起始chunk索引
 
-        uint64_t* _total_cache_size;
+        uint64_t* _total_cache_size = nullptr;
 
         /**
          * @brief Construct a new Client Var object

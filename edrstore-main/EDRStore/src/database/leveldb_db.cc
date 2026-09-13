@@ -137,6 +137,34 @@ bool LeveldbDatabase::QueryBuffer(const char* key, size_t key_size, string& valu
     return query_stat.ok();
 }
 
+map<size_t, uint64_t> LeveldbDatabase::GetValueItemCountStat(
+    size_t item_size) {
+    map<size_t, uint64_t> stat;
+    if (item_size == 0) {
+        return stat;
+    }
+
+    // This startup-only scan initializes the incremental feature histogram.
+    // Do not displace the point-query working set from the bounded block cache.
+    leveldb::ReadOptions read_options;
+    read_options.fill_cache = false;
+    leveldb::Iterator* it = level_db_obj_->NewIterator(read_options);
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        const size_t value_size = it->value().size();
+        if (value_size == 0 || value_size % item_size != 0) {
+            stat[0]++;
+        } else {
+            stat[value_size / item_size]++;
+        }
+    }
+    if (!it->status().ok()) {
+        tool::Logging(my_name_.c_str(),
+            "iterate database for value statistics failed.\n");
+    }
+    delete it;
+    return stat;
+}
+
 /**
  * @brief delete a given key
  * 

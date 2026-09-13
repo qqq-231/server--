@@ -22,10 +22,9 @@ ReadCache::ReadCache(size_t itemNum, size_t itemSize) {
     cacheSize_ = itemNum;
     itemSize_ = itemSize;
     this->readCache_ = new lru11::Cache<string, uint32_t>(cacheSize_, 0);
-    containerPool_ = (uint8_t**) malloc(cacheSize_ * sizeof(uint8_t*));
-    for (size_t i = 0; i < cacheSize_; i++) {
-        containerPool_[i] = (uint8_t*) malloc(itemSize_ * sizeof(uint8_t));
-    }
+    // Keep the configured capacity, but allocate each large container slot
+    // only when it is first used.
+    containerPool_ = (uint8_t**) calloc(cacheSize_, sizeof(uint8_t*));
     currentIndex_ = 0;
 }
 
@@ -35,7 +34,9 @@ ReadCache::ReadCache(size_t itemNum, size_t itemSize) {
  */
 ReadCache::~ReadCache() {
     for (size_t i = 0; i < cacheSize_; i++) {
-        free(containerPool_[i]);
+        if (containerPool_[i] != nullptr) {
+            free(containerPool_[i]);
+        }
     }
     free(containerPool_);
     delete readCache_;
@@ -52,10 +53,18 @@ void ReadCache::Insert(string& name, uint8_t* data, uint32_t length) {
     if (readCache_->size() + 1 > cacheSize_) {
         // evict a item
         uint32_t replaceIndex = readCache_->pruneValue();
+        if (containerPool_[replaceIndex] == nullptr) {
+            containerPool_[replaceIndex] =
+                (uint8_t*) malloc(itemSize_ * sizeof(uint8_t));
+        }
         memset(containerPool_[replaceIndex], 0, itemSize_);
         memcpy(containerPool_[replaceIndex], data, length);
         readCache_->insert(name, replaceIndex);
     } else {
+        if (containerPool_[currentIndex_] == nullptr) {
+            containerPool_[currentIndex_] =
+                (uint8_t*) malloc(itemSize_ * sizeof(uint8_t));
+        }
         memset(containerPool_[currentIndex_], 0, itemSize_);
         memcpy(containerPool_[currentIndex_], data, length);
         readCache_->insert(name, currentIndex_);

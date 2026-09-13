@@ -17,7 +17,33 @@
 
 class SimilarPolicy {
     private:
+        using CandidateFingerprint = array<uint8_t, CHUNK_HASH_SIZE>;
+
+        struct FeatureCandidateList {
+            size_t count = 0;
+            array<CandidateFingerprint, CIPHER_FEATURE_MAX_ID_NUM> ids{};
+        };
+
+        struct CandidateVote {
+            CandidateFingerprint fp{};
+            uint32_t vote = 0;
+        };
+
         string my_name_ = "SimilarPolicy";
+        mutable mutex feature_index_update_mutex_;
+        map<size_t, uint64_t> feature_id_count_stat_;
+        atomic<uint64_t> similarity_compare_count_{0};
+        atomic<uint64_t> similarity_detection_time_us_{0};
+        atomic<uint64_t> candidate_search_time_ns_{0};
+        atomic<uint64_t> candidate_filtering_time_ns_{0};
+        atomic<uint64_t> similarity_compare_time_ns_{0};
+
+        void RecordSimilarityDetection(
+            const chrono::steady_clock::time_point& start_time);
+        bool DecodeFeatureCandidates(const string& stored_ids,
+            FeatureCandidateList& candidates) const;
+        void UpdateFeatureIdCountStat(bool old_entry_exists,
+            size_t old_count, size_t new_count);
 
     public:
         /**
@@ -31,6 +57,16 @@ class SimilarPolicy {
          * 
          */
         ~SimilarPolicy();
+
+        uint64_t GetSimilarityCompareCount() const;
+        double GetSimilarityDetectionTimeMs() const;
+        double GetCandidateSearchTimeMs() const;
+        double GetCandidateFilteringTimeMs() const;
+        double GetSimilarityCompareTimeMs() const;
+
+        void InitializeFeatureIdCountStat(
+            const map<size_t, uint64_t>& feature_id_count_stat);
+        map<size_t, uint64_t> GetFeatureIdCountStat() const;
 
         /**
          * @brief find the base chunk

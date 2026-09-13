@@ -101,6 +101,8 @@ class InMemoryDatabase : public AbsDatabase {
          * @return false not exist
          */
         bool QueryBuffer(const char* key, size_t key_size, string& value);
+
+        map<size_t, uint64_t> GetValueItemCountStat(size_t item_size);
         
         /**
          * @brief delete a given key

@@ -100,7 +100,7 @@ int main(int argc, char* argv[]) {
             << "logical data size, " << "logical chunk num, "
             << "client similar chunk num, " << "total time, "
             << "speed (MiB/s), " << "upload data traffic, "
-            << "version index size" << endl;
+            << "version index size, " << "total upload time(ms)" << endl;
     } else {
         // the log file exists
         log_file.open(log_file_name, ios_base::app | ios_base::out);
@@ -206,6 +206,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Measure the complete upload, including connection setup and all
+    // pipeline threads, using a monotonic clock.
+    chrono::steady_clock::time_point upload_start_time;
+    if (opt_type == UPLOAD_OPT) {
+        upload_start_time = chrono::steady_clock::now();
+    }
+
 //用于存储指向所有工作线程的指针，方便后续统一管理（如等待所有线程结束）。
     vector<boost::thread*> thd_list;
     boost::thread* tmp_thd;//临时线程指针，用于创建新线程并加入到`thd_list`中。
@@ -253,6 +260,7 @@ int main(int argc, char* argv[]) {
 //判断是执行上传还是下载操作
     switch (opt_type) {
         case UPLOAD_OPT: {
+            double total_upload_time_ms = 0.0;
             ifstream input_file_hdl;
             tool::Logging(my_name.c_str(), "upload input file name: %s\n",
                 input_file_path.c_str());
@@ -407,6 +415,10 @@ int main(int argc, char* argv[]) {
             }
             gettimeofday(&etime, NULL);//结束计时
 	    total_time += tool::GetTimeDiff(stime, etime);
+            total_upload_time_ms = chrono::duration<double, milli>(
+                chrono::steady_clock::now() - upload_start_time).count();
+            tool::Logging(my_name.c_str(),
+                "Total Upload Time(ms): %.3lf\n", total_upload_time_ms);
             tool::Logging(my_name.c_str(), "%s finish.\n", input_file_path.c_str());
 
             for (auto it : thd_list) {
@@ -428,7 +440,8 @@ int main(int argc, char* argv[]) {
                 << cache_meta->_total_similar_chunk << ", "
                 << total_time << ", " << speed << ", "
                 << sender_thd->_total_send_data_size << ", "
-                << sender_thd->_cur_version_idx_size << endl;
+                << sender_thd->_cur_version_idx_size << ", "
+                << fixed << setprecision(3) << total_upload_time_ms << endl;
 
 
             // 如果启用了EDR_BREAKDOWN，则写入性能分析文件：

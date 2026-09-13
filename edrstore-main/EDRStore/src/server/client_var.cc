@@ -60,7 +60,10 @@ ClientVar::ClientVar(uint32_t client_id, SSL* client_ssl,
  */
 ClientVar::~ClientVar() {
     delete _container_cache;
-    *_total_cache_size = _inform_cache->DeleteEvictChunk();
+    uint64_t total_cache_size = _inform_cache->DeleteEvictChunk();
+    if (_total_cache_size != nullptr) {
+        *_total_cache_size = total_cache_size;
+    }
     delete _inform_cache;
     switch (opt_type_) {
         case UPLOAD_OPT: {

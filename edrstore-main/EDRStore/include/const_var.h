@@ -34,8 +34,22 @@ static const size_t THREAD_STACK_SIZE = (8*1024*1024);// 8MB (线程栈大小)
 // sketch & super-feature & feature settings  特征提取系统
 static const uint32_t SUPER_FEATURE_PER_CHUNK = 5; // 3 super-feature per chunk    每个块生成3个超级特征
 static const uint32_t FEATURE_PER_SUPER_FEATURE = 4; // 4 features per super-feature  每个超级特征包含4个特征
-static const uint32_t FEATURE_PER_CHUNK = SUPER_FEATURE_PER_CHUNK * 
+static const uint32_t FEATURE_PER_CHUNK = SUPER_FEATURE_PER_CHUNK *
     FEATURE_PER_SUPER_FEATURE; // 12 total features per chunk  每个块共12个特征
+
+// 第二阶段密文相似性索引：一个feature最多保留N个块ID。
+// 插入第N+1个不同ID时，按FIFO淘汰最老ID。
+static const size_t CIPHER_FEATURE_MAX_ID_NUM = 5;
+
+// 候选ID至少命中多少个super feature才判定为相似块。
+// 低于阈值（包括只能命中已淘汰ID）时按NON_SIMILAR_CHUNK处理。
+static const uint32_t CIPHER_FEATURE_MATCH_THRESHOLD = 2;
+
+static_assert(CIPHER_FEATURE_MAX_ID_NUM > 0,
+    "CIPHER_FEATURE_MAX_ID_NUM must be greater than zero");
+static_assert(CIPHER_FEATURE_MATCH_THRESHOLD > 0 &&
+    CIPHER_FEATURE_MATCH_THRESHOLD <= SUPER_FEATURE_PER_CHUNK,
+    "invalid CIPHER_FEATURE_MATCH_THRESHOLD");
 
 // for rabin fingerprint  // Rabin指纹多项式（指纹算法）
 static const uint64_t FINGERPRINT_PT = 0xbfe6b8a5bf378d83LL;

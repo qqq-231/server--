@@ -98,6 +98,13 @@ class AbsDatabase {
         virtual bool QueryBuffer(const char* key, size_t key_size, string& value) = 0;
 
         /**
+         * @brief count database entries by the number of fixed-size items in
+         *        each value; bucket 0 contains malformed values
+         */
+        virtual map<size_t, uint64_t> GetValueItemCountStat(
+            size_t item_size) = 0;
+
+        /**
          * @brief delete a given key
          * 
          * @param key key ptr

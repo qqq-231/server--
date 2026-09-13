@@ -12,6 +12,10 @@
 #include "../../include/server/server_opt_thd.h"
 
 #include <filesystem>
+#include <jemalloc/jemalloc.h>
+
+#define EDRSTORE_STRINGIFY_IMPL(value) #value
+#define EDRSTORE_STRINGIFY(value) EDRSTORE_STRINGIFY_IMPL(value)
 
 /**
  * @brief Construct a new ServerOptThd object
@@ -33,7 +37,18 @@ ServerOptThd::ServerOptThd(SSLConnection* server_channel,
     cache_comp_thd_ = new CacheCompThd();
     data_writer_thd_ = new DataWriterThd(fp_2_addr_db_,
         feature_2_fp_db_, storage_core_);
-    dual_dedup_thd_ = new DualDedupThd(fp_2_addr_db_); 
+    // Build the initial histogram once at startup. Runtime updates maintain it
+    // incrementally, so shutdown does not scan the complete feature database.
+    tool::Logging(my_name_.c_str(),
+        "initializing feature ID histogram without filling DB cache.\n");
+    const auto feature_stat_start = chrono::steady_clock::now();
+    data_writer_thd_->InitializeFeatureIdCountStat();
+    const double feature_stat_time_ms = chrono::duration<double, milli>(
+        chrono::steady_clock::now() - feature_stat_start).count();
+    tool::Logging(my_name_.c_str(),
+        "feature ID histogram initialized in %.3lf ms, RSS: %lu KiB.\n",
+        feature_stat_time_ms, tool::ProcessMemUsage());
+    dual_dedup_thd_ = new DualDedupThd(fp_2_addr_db_);
     
     data_reader_thd_ = new DataReaderThd(fp_2_addr_db_, storage_core_);
     data_decode_thd_ = new DataDecoderThd(server_channel_);
@@ -48,6 +63,8 @@ ServerOptThd::ServerOptThd(SSLConnection* server_channel,
 ServerOptThd::~ServerOptThd() {
     this->StoreStat();
     const RecipeSpaceStat recipe_space = this->CollectRecipeSpace();
+    const map<size_t, uint64_t> feature_id_stat =
+        data_writer_thd_->GetFeatureIdCountStat();
     fprintf(stderr, "========ServerOptThd Info========\n");
     fprintf(stderr, "total recv upload req: %lu\n", 
         _total_upload_opt_num);
@@ -107,6 +124,48 @@ ServerOptThd::~ServerOptThd() {
     fprintf(stderr, "container + all recipes: %lu B\n",
         storage_core_->_write_data_size + recipe_space.file_recipe_bytes +
             recipe_space.key_recipe_bytes);
+    fprintf(stderr, "--------Cipher Feature Index (1:N)--------\n");
+    fprintf(stderr, "max IDs per feature (N): %lu\n",
+        static_cast<uint64_t>(CIPHER_FEATURE_MAX_ID_NUM));
+    fprintf(stderr, "similarity match threshold: %u\n",
+        CIPHER_FEATURE_MATCH_THRESHOLD);
+    uint64_t total_feature_num = 0;
+    uint64_t total_id_num = 0;
+    for (size_t id_num = 1; id_num <= CIPHER_FEATURE_MAX_ID_NUM;
+        id_num++) {
+        auto stat_it = feature_id_stat.find(id_num);
+        const uint64_t feature_num = stat_it == feature_id_stat.end() ?
+            0 : stat_it->second;
+        fprintf(stderr, "features with %lu ID(s): %lu\n",
+            static_cast<uint64_t>(id_num), feature_num);
+        total_feature_num += feature_num;
+        total_id_num += id_num * feature_num;
+    }
+    for (const auto& stat : feature_id_stat) {
+        if (stat.first > CIPHER_FEATURE_MAX_ID_NUM) {
+            fprintf(stderr, "features with %lu ID(s) (legacy): %lu\n",
+                static_cast<uint64_t>(stat.first), stat.second);
+            total_feature_num += stat.second;
+            total_id_num += stat.first * stat.second;
+        }
+    }
+    auto malformed_it = feature_id_stat.find(0);
+    const uint64_t malformed_feature_num =
+        malformed_it == feature_id_stat.end() ? 0 : malformed_it->second;
+    fprintf(stderr, "total features: %lu\n", total_feature_num);
+    fprintf(stderr, "total IDs: %lu\n", total_id_num);
+    fprintf(stderr, "malformed feature entries: %lu\n",
+        malformed_feature_num);
+    fprintf(stderr, "Similarity Compare Count: %lu\n",
+        data_writer_thd_->GetSimilarityCompareCount());
+    fprintf(stderr, "Similarity Detection Time(ms): %.3lf\n",
+        data_writer_thd_->GetSimilarityDetectionTimeMs());
+    fprintf(stderr, "Candidate Search Time(ms): %.3lf\n",
+        data_writer_thd_->GetCandidateSearchTimeMs());
+    fprintf(stderr, "Candidate Filtering Time(ms): %.3lf\n",
+        data_writer_thd_->GetCandidateFilteringTimeMs());
+    fprintf(stderr, "Similarity Compare Time(ms): %.3lf\n",
+        data_writer_thd_->GetSimilarityCompareTimeMs());
     fprintf(stderr, "=================================\n");
 
     // Keep all counters alive until the final report has been emitted.
@@ -358,6 +417,10 @@ void ServerOptThd::Run(SSL* client_ssl) {
     uint64_t total_cache_size = 0;
     cur_client->_total_cache_size = &total_cache_size;
     delete cur_client;
+    // Return pages retained by request worker arenas after their caches and
+    // queues have been destroyed. This does not change cache semantics.
+    mallctl("arena." EDRSTORE_STRINGIFY(MALLCTL_ARENAS_ALL) ".purge",
+        nullptr, nullptr, nullptr, 0);
     if (opt_type == UPLOAD_OPT) {
         this->PrintClientLog(total_cache_size);
     }
@@ -609,7 +672,10 @@ void ServerOptThd::PrintClientLog(uint64_t total_cache_size) {
                 << "delta size (l), " << "similar size (g), "
                 << "similar chunk num (g), " << "delta size (g), "
                 << "storage size, cache size, "
-                << "file recipe size, key recipe size, total recipe size"
+                << "file recipe size, key recipe size, total recipe size, "
+                << "similarity compare count, similarity detection time(ms), "
+                << "candidate search time(ms), candidate filtering time(ms), "
+                << "similarity compare time(ms)"
                 << endl;
         }
         server_log_hdl << data_recv_thd_->_total_logical_data_size << ", " 
@@ -627,7 +693,28 @@ void ServerOptThd::PrintClientLog(uint64_t total_cache_size) {
             << recipe_space.file_recipe_bytes << ", "
             << recipe_space.key_recipe_bytes << ", "
             << recipe_space.file_recipe_bytes + recipe_space.key_recipe_bytes
+            << ", " << data_writer_thd_->GetSimilarityCompareCount()
+            << ", " << fixed << setprecision(3)
+            << data_writer_thd_->GetSimilarityDetectionTimeMs()
+            << ", " << data_writer_thd_->GetCandidateSearchTimeMs()
+            << ", " << data_writer_thd_->GetCandidateFilteringTimeMs()
+            << ", " << data_writer_thd_->GetSimilarityCompareTimeMs()
             << endl;
+        tool::Logging(my_name_.c_str(),
+            "Similarity Compare Count: %lu\n",
+            data_writer_thd_->GetSimilarityCompareCount());
+        tool::Logging(my_name_.c_str(),
+            "Similarity Detection Time(ms): %.3lf\n",
+            data_writer_thd_->GetSimilarityDetectionTimeMs());
+        tool::Logging(my_name_.c_str(),
+            "Candidate Search Time(ms): %.3lf\n",
+            data_writer_thd_->GetCandidateSearchTimeMs());
+        tool::Logging(my_name_.c_str(),
+            "Candidate Filtering Time(ms): %.3lf\n",
+            data_writer_thd_->GetCandidateFilteringTimeMs());
+        tool::Logging(my_name_.c_str(),
+            "Similarity Compare Time(ms): %.3lf\n",
+            data_writer_thd_->GetSimilarityCompareTimeMs());
         server_log_hdl.close();
     }
 

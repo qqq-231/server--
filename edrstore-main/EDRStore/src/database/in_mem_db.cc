@@ -212,6 +212,26 @@ bool InMemoryDatabase::QueryBuffer(const char* key, size_t key_size, string& val
     return ret;
 }
 
+map<size_t, uint64_t> InMemoryDatabase::GetValueItemCountStat(
+    size_t item_size) {
+    map<size_t, uint64_t> stat;
+    if (item_size == 0) {
+        return stat;
+    }
+
+    pthread_rwlock_rdlock(&rwlock_);
+    for (const auto& entry : index_obj_) {
+        const size_t value_size = entry.second.size();
+        if (value_size == 0 || value_size % item_size != 0) {
+            stat[0]++;
+        } else {
+            stat[value_size / item_size]++;
+        }
+    }
+    pthread_rwlock_unlock(&rwlock_);
+    return stat;
+}
+
 /**
  * @brief delete a given key
  * 

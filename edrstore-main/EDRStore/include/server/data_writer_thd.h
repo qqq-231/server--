@@ -79,6 +79,35 @@ class DataWriterThd {
         uint64_t _total_delta_size = 0;
         uint64_t _similarity_hist[7] = {0};
 
+        uint64_t GetSimilarityCompareCount() const {
+            return similar_policy_->GetSimilarityCompareCount();
+        }
+
+        double GetSimilarityDetectionTimeMs() const {
+            return similar_policy_->GetSimilarityDetectionTimeMs();
+        }
+
+        double GetCandidateSearchTimeMs() const {
+            return similar_policy_->GetCandidateSearchTimeMs();
+        }
+
+        double GetCandidateFilteringTimeMs() const {
+            return similar_policy_->GetCandidateFilteringTimeMs();
+        }
+
+        double GetSimilarityCompareTimeMs() const {
+            return similar_policy_->GetSimilarityCompareTimeMs();
+        }
+
+        void InitializeFeatureIdCountStat() {
+            similar_policy_->InitializeFeatureIdCountStat(
+                feature_2_fp_db_->GetValueItemCountStat(CHUNK_HASH_SIZE));
+        }
+
+        map<size_t, uint64_t> GetFeatureIdCountStat() const {
+            return similar_policy_->GetFeatureIdCountStat();
+        }
+
 #ifdef EDR_BREAKDOWN
         struct timeval _comp_delta_stime;
         struct timeval _comp_delta_etime;
