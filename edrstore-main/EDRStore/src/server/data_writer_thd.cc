@@ -15,14 +15,14 @@
  * @brief Construct a new DataWriterThd object
  * 
  * @param fp_2_addr_db fp to chunk addr index
- * @param feature_2_fp_db feature to fp index
  * @param storage_core storage core
+ * @param binary_tree_index persistent similarity candidate index
  */
 DataWriterThd::DataWriterThd(AbsDatabase* fp_2_addr_db,
-    AbsDatabase* feature_2_fp_db, StorageCore* storage_core) {
+    StorageCore* storage_core, BinaryTreeIndex* binary_tree_index) {
     fp_2_addr_db_ = fp_2_addr_db;
-    feature_2_fp_db_ = feature_2_fp_db;
     storage_core_ = storage_core;
+    binary_tree_index_ = binary_tree_index;
     delta_comp_ = new DeltaComp();
     similar_policy_ = new SimilarPolicy();
 }
@@ -72,8 +72,8 @@ void DataWriterThd::Run(ClientVar* cur_client) {
                     break;
                 }
                 case UNIQUE_CHUNK: {
-                    similar_policy_->FindBaseChunk(feature_2_fp_db_,
-                        &tmp_data.info);
+                    similar_policy_->FindBaseChunk(binary_tree_index_,
+                        fp_2_addr_db_, &tmp_data.info);
                     switch (tmp_data.info.stat) {
                         case SIMILAR_CHUNK: {
                             _total_similar_chunk_num++;
@@ -83,11 +83,6 @@ void DataWriterThd::Run(ClientVar* cur_client) {
                         }
                         case NON_SIMILAR_CHUNK: {
                             this->ProcNonSimilarChunk(&tmp_data, cur_client);
-                            similar_policy_->UpdateFeatureIndex(
-                                feature_2_fp_db_,
-                                tmp_data.info.features,
-                                tmp_data.info.fp
-                            );
                             break;
                         }
                         default: {
@@ -108,6 +103,10 @@ void DataWriterThd::Run(ClientVar* cur_client) {
             // update the fp index   指纹-地址数据库更新
             fp_2_addr_db_->InsertBothBuffer((char*)tmp_data.info.fp, CHUNK_HASH_SIZE,
                 (char*)&tmp_data.info.addr, sizeof(KeyForChunkHashDB_t));
+
+            // Publish a tree entry only after both data and authoritative
+            // fp->address metadata are visible.
+            binary_tree_index_->InsertChunk(&tmp_data.info);
             
             gettimeofday(&proc_etime, NULL);
             total_proc_time += tool::GetTimeDiff(proc_stime, proc_etime);

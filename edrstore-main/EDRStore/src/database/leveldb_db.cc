@@ -10,6 +10,7 @@
  */
 
 #include "../../include/database/leveldb_db.h"
+#include "../../include/const_var.h"
 
 /**
  * @brief Construct a new Database object
@@ -50,10 +51,10 @@ bool LeveldbDatabase::OpenDB(string db_name) {
     db_name_ = db_name;
 
     options_.create_if_missing = true;
-    // The old expression `2 << 30` allocated a 2 GiB cache (not 256 MiB).
-    // Keep each LevelDB instance explicitly bounded to 256 MiB.
+    // Multiple persistent tree databases are open concurrently. Keep each
+    // cache bounded so their aggregate remains predictable.
     options_.block_cache = leveldb::NewLRUCache(
-        static_cast<size_t>(256) << 20);
+        LEVELDB_BLOCK_CACHE_MAX_BYTES);
     leveldb::Status status = leveldb::DB::Open(options_, db_name_,
         &level_db_obj_);
     assert(status.ok());

@@ -51,6 +51,34 @@ static_assert(CIPHER_FEATURE_MATCH_THRESHOLD > 0 &&
     CIPHER_FEATURE_MATCH_THRESHOLD <= SUPER_FEATURE_PER_CHUNK,
     "invalid CIPHER_FEATURE_MATCH_THRESHOLD");
 
+// Persistent binary-tree candidate index. Keep the current five Finesse
+// super-features and threshold; only the candidate lookup structure changes.
+static const uint32_t BINARY_TREE_INDEX_DEPTH = 20;
+static const size_t MAX_CANDIDATES_PER_LEAF = 8;
+static const size_t MAX_BINARY_TREE_CANDIDATES_PER_CHUNK = 64;
+static const size_t MAX_TREE_PATHS = 3;
+static const size_t BINARY_TREE_LEAF_CACHE_MAX_BYTES =
+    256ULL * 1024ULL * 1024ULL;
+
+// The storage server opens the fingerprint DB plus four tree DBs. Bound each
+// LevelDB cache so their aggregate does not recreate the previous OOM issue.
+static const size_t LEVELDB_BLOCK_CACHE_MAX_BYTES =
+    64ULL * 1024ULL * 1024ULL;
+
+static_assert(BINARY_TREE_INDEX_DEPTH > 0 && BINARY_TREE_INDEX_DEPTH < 63,
+    "BINARY_TREE_INDEX_DEPTH must be in [1, 62]");
+static_assert(MAX_CANDIDATES_PER_LEAF > 0,
+    "MAX_CANDIDATES_PER_LEAF must be greater than zero");
+static_assert(MAX_BINARY_TREE_CANDIDATES_PER_CHUNK > 0,
+    "MAX_BINARY_TREE_CANDIDATES_PER_CHUNK must be greater than zero");
+static_assert(MAX_TREE_PATHS > 0 &&
+    MAX_TREE_PATHS <= SUPER_FEATURE_PER_CHUNK,
+    "MAX_TREE_PATHS must be in [1, SUPER_FEATURE_PER_CHUNK]");
+static_assert(BINARY_TREE_LEAF_CACHE_MAX_BYTES > 0,
+    "BINARY_TREE_LEAF_CACHE_MAX_BYTES must be greater than zero");
+static_assert(LEVELDB_BLOCK_CACHE_MAX_BYTES > 0,
+    "LEVELDB_BLOCK_CACHE_MAX_BYTES must be greater than zero");
+
 // for rabin fingerprint  // Rabin指纹多项式（指纹算法）
 static const uint64_t FINGERPRINT_PT = 0xbfe6b8a5bf378d83LL;
 

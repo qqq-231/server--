@@ -15,6 +15,8 @@
 #include "../database/db_factory.h"
 #include "../data_structure.h"
 
+class BinaryTreeIndex;
+
 class SimilarPolicy {
     private:
         using CandidateFingerprint = array<uint8_t, CHUNK_HASH_SIZE>;
@@ -76,6 +78,9 @@ class SimilarPolicy {
          */
         void FindBaseChunk(AbsDatabase* feature_2_fp_db,
             ChunkInfo_t* info);
+
+        bool FindBaseChunk(BinaryTreeIndex* binary_tree_index,
+            AbsDatabase* fp_2_addr_db, ChunkInfo_t* info);
 
         /**
          * @brief find the base chunk

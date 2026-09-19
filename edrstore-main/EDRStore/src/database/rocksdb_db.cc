@@ -136,6 +136,23 @@ bool RocksdbDatabase::QueryBuffer(const char* key, size_t key_size, string& valu
     return query_stat.ok();
 }
 
+vector<bool> RocksdbDatabase::BatchQueryBuffer(const vector<string>& keys,
+    vector<string>& values) {
+    vector<rocksdb::Slice> key_slices;
+    key_slices.reserve(keys.size());
+    for (const string& key : keys) {
+        key_slices.emplace_back(key.data(), key.size());
+    }
+
+    const vector<rocksdb::Status> statuses = rocks_db_obj_->MultiGet(
+        read_options_, key_slices, &values);
+    vector<bool> found(keys.size(), false);
+    for (size_t key_idx = 0; key_idx < statuses.size(); key_idx++) {
+        found[key_idx] = statuses[key_idx].ok();
+    }
+    return found;
+}
+
 map<size_t, uint64_t> RocksdbDatabase::GetValueItemCountStat(
     size_t item_size) {
     map<size_t, uint64_t> stat;

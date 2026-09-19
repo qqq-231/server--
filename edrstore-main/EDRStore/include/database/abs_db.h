@@ -98,6 +98,13 @@ class AbsDatabase {
         virtual bool QueryBuffer(const char* key, size_t key_size, string& value) = 0;
 
         /**
+         * @brief query multiple keys; backends may override with a native
+         *        multi-get implementation
+         */
+        virtual vector<bool> BatchQueryBuffer(const vector<string>& keys,
+            vector<string>& values);
+
+        /**
          * @brief count database entries by the number of fixed-size items in
          *        each value; bucket 0 contains malformed values
          */

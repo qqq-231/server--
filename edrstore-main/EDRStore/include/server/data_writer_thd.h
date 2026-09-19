@@ -16,6 +16,7 @@
 #include "../database/db_factory.h"
 #include "../reduction/delta_comp.h"
 #include "../reduction/similar_policy.h"
+#include "../reduction/binary_tree_index.h"
 #include "../compression/compress_util.h"
 #include "client_var.h"
 #include "storage_core.h"
@@ -35,7 +36,7 @@ class DataWriterThd {
 
         // for fp to chunk addr index
         AbsDatabase* fp_2_addr_db_;
-        AbsDatabase* feature_2_fp_db_;
+        BinaryTreeIndex* binary_tree_index_;
 
         /**
          * @brief process a similar chunk
@@ -99,15 +100,6 @@ class DataWriterThd {
             return similar_policy_->GetSimilarityCompareTimeMs();
         }
 
-        void InitializeFeatureIdCountStat() {
-            similar_policy_->InitializeFeatureIdCountStat(
-                feature_2_fp_db_->GetValueItemCountStat(CHUNK_HASH_SIZE));
-        }
-
-        map<size_t, uint64_t> GetFeatureIdCountStat() const {
-            return similar_policy_->GetFeatureIdCountStat();
-        }
-
 #ifdef EDR_BREAKDOWN
         struct timeval _comp_delta_stime;
         struct timeval _comp_delta_etime;
@@ -119,11 +111,11 @@ class DataWriterThd {
          * @brief Construct a new DataWriterThd object
          * 
          * @param fp_2_addr_db fp to chunk addr index
-         * @param feature_2_fp_db feature to fp index
          * @param storage_core storage core
+         * @param binary_tree_index persistent similarity candidate index
          */
-        DataWriterThd(AbsDatabase* fp_2_addr_db, AbsDatabase* feature_2_fp_db,
-            StorageCore* storage_core);
+        DataWriterThd(AbsDatabase* fp_2_addr_db, StorageCore* storage_core,
+            BinaryTreeIndex* binary_tree_index);
 
         /**
          * @brief Destroy the DataWriterThd object

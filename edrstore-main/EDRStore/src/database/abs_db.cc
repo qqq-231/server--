@@ -18,3 +18,14 @@
 AbsDatabase::AbsDatabase() {
 
 }
+
+vector<bool> AbsDatabase::BatchQueryBuffer(const vector<string>& keys,
+    vector<string>& values) {
+    values.assign(keys.size(), string());
+    vector<bool> found(keys.size(), false);
+    for (size_t key_idx = 0; key_idx < keys.size(); key_idx++) {
+        found[key_idx] = this->QueryBuffer(keys[key_idx].data(),
+            keys[key_idx].size(), values[key_idx]);
+    }
+    return found;
+}

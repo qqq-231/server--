@@ -108,6 +108,9 @@ class RocksdbDatabase : public AbsDatabase {
          */
         bool QueryBuffer(const char* key, size_t key_size, string& value);
 
+        vector<bool> BatchQueryBuffer(const vector<string>& keys,
+            vector<string>& values) override;
+
         map<size_t, uint64_t> GetValueItemCountStat(size_t item_size);
 
         /**

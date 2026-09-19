@@ -22,32 +22,21 @@
  * 
  * @param server_channel the server channel
  * @param fp_2_addr_db the fp to address index
- * @param feature_2_fp_db the feature to base hash index
+ * @param binary_tree_index persistent similarity candidate index
  */
 ServerOptThd::ServerOptThd(SSLConnection* server_channel, 
-    AbsDatabase* fp_2_addr_db, AbsDatabase* feature_2_fp_db) {
+    AbsDatabase* fp_2_addr_db, BinaryTreeIndex* binary_tree_index) {
     server_channel_ = server_channel;
     fp_2_addr_db_ = fp_2_addr_db;
-    feature_2_fp_db_ = feature_2_fp_db;
+    binary_tree_index_ = binary_tree_index;
 
     // init the upload
     storage_core_ = new StorageCore();
     
     data_recv_thd_ = new DataRecvThd(server_channel_, fp_2_addr_db_);
     cache_comp_thd_ = new CacheCompThd();
-    data_writer_thd_ = new DataWriterThd(fp_2_addr_db_,
-        feature_2_fp_db_, storage_core_);
-    // Build the initial histogram once at startup. Runtime updates maintain it
-    // incrementally, so shutdown does not scan the complete feature database.
-    tool::Logging(my_name_.c_str(),
-        "initializing feature ID histogram without filling DB cache.\n");
-    const auto feature_stat_start = chrono::steady_clock::now();
-    data_writer_thd_->InitializeFeatureIdCountStat();
-    const double feature_stat_time_ms = chrono::duration<double, milli>(
-        chrono::steady_clock::now() - feature_stat_start).count();
-    tool::Logging(my_name_.c_str(),
-        "feature ID histogram initialized in %.3lf ms, RSS: %lu KiB.\n",
-        feature_stat_time_ms, tool::ProcessMemUsage());
+    data_writer_thd_ = new DataWriterThd(fp_2_addr_db_, storage_core_,
+        binary_tree_index_);
     dual_dedup_thd_ = new DualDedupThd(fp_2_addr_db_);
     
     data_reader_thd_ = new DataReaderThd(fp_2_addr_db_, storage_core_);
@@ -63,8 +52,7 @@ ServerOptThd::ServerOptThd(SSLConnection* server_channel,
 ServerOptThd::~ServerOptThd() {
     this->StoreStat();
     const RecipeSpaceStat recipe_space = this->CollectRecipeSpace();
-    const map<size_t, uint64_t> feature_id_stat =
-        data_writer_thd_->GetFeatureIdCountStat();
+    const BinaryTreeIndexStat tree_stat = binary_tree_index_->GetStat();
     fprintf(stderr, "========ServerOptThd Info========\n");
     fprintf(stderr, "total recv upload req: %lu\n", 
         _total_upload_opt_num);
@@ -124,46 +112,30 @@ ServerOptThd::~ServerOptThd() {
     fprintf(stderr, "container + all recipes: %lu B\n",
         storage_core_->_write_data_size + recipe_space.file_recipe_bytes +
             recipe_space.key_recipe_bytes);
-    fprintf(stderr, "--------Cipher Feature Index (1:N)--------\n");
-    fprintf(stderr, "max IDs per feature (N): %lu\n",
-        static_cast<uint64_t>(CIPHER_FEATURE_MAX_ID_NUM));
-    fprintf(stderr, "similarity match threshold: %u\n",
-        CIPHER_FEATURE_MATCH_THRESHOLD);
-    uint64_t total_feature_num = 0;
-    uint64_t total_id_num = 0;
-    for (size_t id_num = 1; id_num <= CIPHER_FEATURE_MAX_ID_NUM;
-        id_num++) {
-        auto stat_it = feature_id_stat.find(id_num);
-        const uint64_t feature_num = stat_it == feature_id_stat.end() ?
-            0 : stat_it->second;
-        fprintf(stderr, "features with %lu ID(s): %lu\n",
-            static_cast<uint64_t>(id_num), feature_num);
-        total_feature_num += feature_num;
-        total_id_num += id_num * feature_num;
-    }
-    for (const auto& stat : feature_id_stat) {
-        if (stat.first > CIPHER_FEATURE_MAX_ID_NUM) {
-            fprintf(stderr, "features with %lu ID(s) (legacy): %lu\n",
-                static_cast<uint64_t>(stat.first), stat.second);
-            total_feature_num += stat.second;
-            total_id_num += stat.first * stat.second;
-        }
-    }
-    auto malformed_it = feature_id_stat.find(0);
-    const uint64_t malformed_feature_num =
-        malformed_it == feature_id_stat.end() ? 0 : malformed_it->second;
-    fprintf(stderr, "total features: %lu\n", total_feature_num);
-    fprintf(stderr, "total IDs: %lu\n", total_id_num);
-    fprintf(stderr, "malformed feature entries: %lu\n",
-        malformed_feature_num);
+    fprintf(stderr, "--------Binary Tree Index--------\n");
+    fprintf(stderr, "tree depth: %u\n", BINARY_TREE_INDEX_DEPTH);
+    fprintf(stderr, "tree paths per chunk limit: %lu\n",
+        static_cast<uint64_t>(MAX_TREE_PATHS));
+    fprintf(stderr, "candidate limit per leaf/chunk: %lu/%lu\n",
+        static_cast<uint64_t>(MAX_CANDIDATES_PER_LEAF),
+        static_cast<uint64_t>(MAX_BINARY_TREE_CANDIDATES_PER_CHUNK));
+    fprintf(stderr, "materialized nodes: %lu\n",
+        tree_stat.materialized_node_num);
+    fprintf(stderr, "leaf buckets/entries: %lu/%lu\n",
+        tree_stat.leaf_bucket_num, tree_stat.leaf_entry_num);
+    fprintf(stderr, "indexed chunks/file paths: %lu/%lu\n",
+        tree_stat.indexed_chunk_num, tree_stat.file_path_num);
+    fprintf(stderr, "candidate searches/leaves/verified: %lu/%lu/%lu\n",
+        tree_stat.candidate_search_num, tree_stat.candidate_leaf_num,
+        tree_stat.candidate_verify_num);
     fprintf(stderr, "Similarity Compare Count: %lu\n",
         data_writer_thd_->GetSimilarityCompareCount());
-    fprintf(stderr, "Similarity Detection Time(ms): %.3lf\n",
+    fprintf(stderr, "Total Similarity Detection Time(ms): %.3lf\n",
         data_writer_thd_->GetSimilarityDetectionTimeMs());
-    fprintf(stderr, "Candidate Search Time(ms): %.3lf\n",
-        data_writer_thd_->GetCandidateSearchTimeMs());
+    fprintf(stderr, "BinaryTree Search Time(ms): %.3lf\n",
+        static_cast<double>(tree_stat.binary_tree_search_time_us) / 1000.0);
     fprintf(stderr, "Candidate Filtering Time(ms): %.3lf\n",
-        data_writer_thd_->GetCandidateFilteringTimeMs());
+        static_cast<double>(tree_stat.candidate_filtering_time_us) / 1000.0);
     fprintf(stderr, "Similarity Compare Time(ms): %.3lf\n",
         data_writer_thd_->GetSimilarityCompareTimeMs());
     fprintf(stderr, "=================================\n");
@@ -422,6 +394,8 @@ void ServerOptThd::Run(SSL* client_ssl) {
     mallctl("arena." EDRSTORE_STRINGIFY(MALLCTL_ARENAS_ALL) ".purge",
         nullptr, nullptr, nullptr, 0);
     if (opt_type == UPLOAD_OPT) {
+        // The recipe is closed by ClientVar destruction before it is scanned.
+        binary_tree_index_->RecordFileRecipe(file_name, recipe_path);
         this->PrintClientLog(total_cache_size);
     }
     free(recv_buf.send_buf);
@@ -658,6 +632,21 @@ void ServerOptThd::StoreStat() {
  */
 void ServerOptThd::PrintClientLog(uint64_t total_cache_size) {
     const RecipeSpaceStat recipe_space = this->CollectRecipeSpace();
+    const BinaryTreeIndexStat tree_stat = binary_tree_index_->GetStat();
+    const double average_candidate_num = tree_stat.candidate_search_num == 0 ?
+        0.0 : static_cast<double>(tree_stat.candidate_returned_num) /
+            tree_stat.candidate_search_num;
+    const double average_scanned_leaf_entries =
+        tree_stat.candidate_search_num == 0 ? 0.0 :
+            static_cast<double>(tree_stat.loaded_leaf_entry_num) /
+                tree_stat.candidate_search_num;
+    const double average_tree_search_num =
+        tree_stat.candidate_search_num == 0 ? 0.0 :
+            static_cast<double>(tree_stat.tree_path_search_num) /
+                tree_stat.candidate_search_num;
+    const double average_leaf_size = tree_stat.candidate_leaf_num == 0 ?
+        0.0 : static_cast<double>(tree_stat.loaded_leaf_entry_num) /
+            tree_stat.candidate_leaf_num;
     ofstream server_log_hdl;
     bool is_first_server_log = !(tool::FileExist(server_log_name_));
     server_log_hdl.open(server_log_name_, ios_base::app | ios_base::out);
@@ -673,9 +662,15 @@ void ServerOptThd::PrintClientLog(uint64_t total_cache_size) {
                 << "similar chunk num (g), " << "delta size (g), "
                 << "storage size, cache size, "
                 << "file recipe size, key recipe size, total recipe size, "
+                << "average candidates per chunk, max candidates per chunk, "
+                << "average leaf size, max leaf size, "
                 << "similarity compare count, similarity detection time(ms), "
-                << "candidate search time(ms), candidate filtering time(ms), "
-                << "similarity compare time(ms)"
+                << "average scanned leaf entries, candidate verified, "
+                << "binary tree search time(ms), candidate filtering time(ms), "
+                << "similarity compare time(ms), average tree searches, "
+                << "leaf cache hits, leaf cache misses, leaf cache entries, "
+                << "leaf cache current bytes, leaf cache peak bytes, "
+                << "leaf cache limit bytes, leaf cache evictions"
                 << endl;
         }
         server_log_hdl << data_recv_thd_->_total_logical_data_size << ", " 
@@ -693,27 +688,65 @@ void ServerOptThd::PrintClientLog(uint64_t total_cache_size) {
             << recipe_space.file_recipe_bytes << ", "
             << recipe_space.key_recipe_bytes << ", "
             << recipe_space.file_recipe_bytes + recipe_space.key_recipe_bytes
+            << ", " << fixed << setprecision(3) << average_candidate_num
+            << ", " << tree_stat.max_candidate_num
+            << ", " << average_leaf_size
+            << ", " << tree_stat.max_loaded_leaf_size
             << ", " << data_writer_thd_->GetSimilarityCompareCount()
-            << ", " << fixed << setprecision(3)
+            << ", "
             << data_writer_thd_->GetSimilarityDetectionTimeMs()
-            << ", " << data_writer_thd_->GetCandidateSearchTimeMs()
-            << ", " << data_writer_thd_->GetCandidateFilteringTimeMs()
+            << ", " << average_scanned_leaf_entries
+            << ", " << tree_stat.candidate_verify_num
+            << ", " << static_cast<double>(
+                tree_stat.binary_tree_search_time_us) / 1000.0
+            << ", " << static_cast<double>(
+                tree_stat.candidate_filtering_time_us) / 1000.0
             << ", " << data_writer_thd_->GetSimilarityCompareTimeMs()
+            << ", " << average_tree_search_num
+            << ", " << tree_stat.leaf_cache_hit_num
+            << ", " << tree_stat.leaf_cache_miss_num
+            << ", " << tree_stat.leaf_cache_entry_num
+            << ", " << tree_stat.leaf_cache_current_bytes
+            << ", " << tree_stat.leaf_cache_peak_bytes
+            << ", " << tree_stat.leaf_cache_limit_bytes
+            << ", " << tree_stat.leaf_cache_eviction_num
             << endl;
+        tool::Logging(my_name_.c_str(),
+            "BinaryTree Candidate Statistics:\n"
+            "average scanned leaf entries: %.3lf\n"
+            "average selected candidates: %.3lf\n"
+            "candidate verified: %lu\n"
+            "average candidate number per chunk: %.3lf\n"
+            "max candidate number per chunk: %lu\n"
+            "average leaf size: %.3lf\n"
+            "max leaf size: %lu\n"
+            "average tree search number per chunk: %.3lf\n"
+            "leaf cache hit/miss: %lu/%lu\n"
+            "leaf cache entries: %lu\n"
+            "leaf cache bytes current/peak/limit: %lu/%lu/%lu\n"
+            "leaf cache evictions: %lu\n",
+            average_scanned_leaf_entries, average_candidate_num,
+            tree_stat.candidate_verify_num, average_candidate_num,
+            tree_stat.max_candidate_num, average_leaf_size,
+            tree_stat.max_loaded_leaf_size, average_tree_search_num,
+            tree_stat.leaf_cache_hit_num, tree_stat.leaf_cache_miss_num,
+            tree_stat.leaf_cache_entry_num,
+            tree_stat.leaf_cache_current_bytes,
+            tree_stat.leaf_cache_peak_bytes,
+            tree_stat.leaf_cache_limit_bytes,
+            tree_stat.leaf_cache_eviction_num);
         tool::Logging(my_name_.c_str(),
             "Similarity Compare Count: %lu\n",
             data_writer_thd_->GetSimilarityCompareCount());
         tool::Logging(my_name_.c_str(),
-            "Similarity Detection Time(ms): %.3lf\n",
+            "Total Similarity Detection Time(ms): %.3lf\n",
             data_writer_thd_->GetSimilarityDetectionTimeMs());
         tool::Logging(my_name_.c_str(),
-            "Candidate Search Time(ms): %.3lf\n",
-            data_writer_thd_->GetCandidateSearchTimeMs());
-        tool::Logging(my_name_.c_str(),
-            "Candidate Filtering Time(ms): %.3lf\n",
-            data_writer_thd_->GetCandidateFilteringTimeMs());
-        tool::Logging(my_name_.c_str(),
+            "BinaryTree Search Time(ms): %.3lf\n"
+            "Candidate Filtering Time(ms): %.3lf\n"
             "Similarity Compare Time(ms): %.3lf\n",
+            static_cast<double>(tree_stat.binary_tree_search_time_us) / 1000.0,
+            static_cast<double>(tree_stat.candidate_filtering_time_us) / 1000.0,
             data_writer_thd_->GetSimilarityCompareTimeMs());
         server_log_hdl.close();
     }

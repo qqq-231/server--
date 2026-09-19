@@ -10,6 +10,7 @@
  */
 
 #include "../../include/reduction/similar_policy.h"
+#include "../../include/reduction/binary_tree_index.h"
 #include"../../include/const_var.h"
 bool CmpPair(pair<string, uint32_t>& a, 
     pair<string, uint32_t>& b) {
@@ -200,6 +201,75 @@ void SimilarPolicy::FindBaseChunk(AbsDatabase* feature_2_fp_db,
     this->RecordSimilarityDetection(detection_start);
 
     return ;
+}
+
+bool SimilarPolicy::FindBaseChunk(BinaryTreeIndex* binary_tree_index,
+    AbsDatabase* fp_2_addr_db, ChunkInfo_t* info) {
+    const auto detection_start = chrono::steady_clock::now();
+    vector<BinaryTreeCandidate> candidates;
+    binary_tree_index->FindBaseCandidates(info->features, info->fp,
+        candidates);
+    if (candidates.empty()) {
+        info->stat = NON_SIMILAR_CHUNK;
+        memset(info->addr.base_fp, 0, CHUNK_HASH_SIZE);
+        this->RecordSimilarityDetection(detection_start);
+        return false;
+    }
+
+    const auto compare_start = chrono::steady_clock::now();
+    uint32_t best_vote = 0;
+    const BinaryTreeCandidate* best_candidate = nullptr;
+    for (const auto& candidate : candidates) {
+        similarity_compare_count_.fetch_add(1, memory_order_relaxed);
+
+        // The address DB remains authoritative. Tree entries can outlive an
+        // interrupted upload or an older on-disk index version.
+        string addr_value;
+        if (!fp_2_addr_db->QueryBuffer((char*)candidate.chunk_id,
+            CHUNK_HASH_SIZE, addr_value) ||
+            addr_value.size() != sizeof(KeyForChunkHashDB_t)) {
+            continue;
+        }
+        const KeyForChunkHashDB_t* addr =
+            reinterpret_cast<const KeyForChunkHashDB_t*>(addr_value.data());
+        if (addr->stat != COMP_BASE_CHUNK &&
+            addr->stat != UNCOMP_BASE_CHUNK) {
+            continue;
+        }
+
+        uint32_t vote = 0;
+        for (size_t query_idx = 0; query_idx < SUPER_FEATURE_PER_CHUNK;
+            query_idx++) {
+            for (size_t candidate_idx = 0;
+                candidate_idx < SUPER_FEATURE_PER_CHUNK; candidate_idx++) {
+                if (info->features[query_idx] ==
+                    candidate.features[candidate_idx]) {
+                    vote++;
+                    break;
+                }
+            }
+        }
+        if (best_candidate == nullptr || vote > best_vote) {
+            best_vote = vote;
+            best_candidate = &candidate;
+        }
+    }
+
+    similarity_compare_time_ns_.fetch_add(
+        chrono::duration_cast<chrono::nanoseconds>(
+            chrono::steady_clock::now() - compare_start).count(),
+        memory_order_relaxed);
+    if (best_candidate != nullptr &&
+        best_vote >= CIPHER_FEATURE_MATCH_THRESHOLD) {
+        memcpy(info->addr.base_fp, best_candidate->chunk_id,
+            CHUNK_HASH_SIZE);
+        info->stat = SIMILAR_CHUNK;
+    } else {
+        memset(info->addr.base_fp, 0, CHUNK_HASH_SIZE);
+        info->stat = NON_SIMILAR_CHUNK;
+    }
+    this->RecordSimilarityDetection(detection_start);
+    return best_candidate != nullptr;
 }
 
 /**

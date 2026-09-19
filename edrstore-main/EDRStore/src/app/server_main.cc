@@ -26,7 +26,11 @@ Configure config("config.json");
 SSLConnection* server_channel;
 DatabaseFactory db_factory;
 AbsDatabase* fp_2_addr_db;
-AbsDatabase* feature_2_fp_db;
+AbsDatabase* binary_tree_node_db;
+AbsDatabase* binary_tree_leaf_db;
+AbsDatabase* binary_tree_chunk_path_db;
+AbsDatabase* binary_tree_file_path_db;
+BinaryTreeIndex* binary_tree_index;
 vector<boost::thread*> thd_list;
 
 // Release large per-request allocations promptly.  EDRStore is linked with
@@ -74,10 +78,14 @@ void CTRLC(int s) {
     }
     thd_list.clear();
     delete server_opt_thd;
+    delete binary_tree_index;
     tool::Logging(my_name.c_str(), "clear all server threads.\n");
 
     delete fp_2_addr_db;
-    delete feature_2_fp_db;
+    delete binary_tree_node_db;
+    delete binary_tree_leaf_db;
+    delete binary_tree_chunk_path_db;
+    delete binary_tree_file_path_db;
     delete server_channel;
 
     tool::Logging(my_name.c_str(), "clear all DBs and network connection.\n");
@@ -105,15 +113,26 @@ int main(int argc, char* argv[]) {
 
     fp_2_addr_db = db_factory.CreateDatabase(LEVELDB_DB,
         config.GetFp2ChunkDBName());
-    feature_2_fp_db = db_factory.CreateDatabase(LEVELDB_DB,
-        config.GetFeature2FpDBName());
+    const string tree_db_prefix = config.GetFeature2FpDBName() +
+        "-binary-tree";
+    binary_tree_node_db = db_factory.CreateDatabase(LEVELDB_DB,
+        tree_db_prefix + "-nodes");
+    binary_tree_leaf_db = db_factory.CreateDatabase(LEVELDB_DB,
+        tree_db_prefix + "-leaves");
+    binary_tree_chunk_path_db = db_factory.CreateDatabase(LEVELDB_DB,
+        tree_db_prefix + "-chunks");
+    binary_tree_file_path_db = db_factory.CreateDatabase(LEVELDB_DB,
+        tree_db_prefix + "-files");
+    binary_tree_index = new BinaryTreeIndex(binary_tree_node_db,
+        binary_tree_leaf_db, binary_tree_chunk_path_db,
+        binary_tree_file_path_db);
 
     server_channel = new SSLConnection(config.GetStorageServerIP(),
         config.GetStorageServerPort(), IN_SERVER_SIDE);
 
     // init
     server_opt_thd = new ServerOptThd(server_channel, fp_2_addr_db,
-        feature_2_fp_db);
+        binary_tree_index);
 
     /**
      * |---------------------------------------|
