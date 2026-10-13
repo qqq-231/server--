@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# EDRStore three-program sequential experiment runner.
+# EDRStore multi-program sequential experiment runner.
 # Each dataset gets a clean build/storage state, then upload + download runs
 # under one ServerMain/KeyManager pair. Services are stopped with SIGINT,
 # matching an interactive Ctrl+C.
@@ -13,7 +13,7 @@ PRIMARY_COMMAND_DIR="/home/user2/运行命令/命令"
 SERVER_INIT_DELAY=5
 COMMAND_INTERVAL=0.3
 SERVICE_STOP_TIMEOUT=300
-CLIENT_COMMAND_TIMEOUT_SECONDS="${CLIENT_COMMAND_TIMEOUT_SECONDS:-5400}"
+CLIENT_COMMAND_TIMEOUT_SECONDS="${CLIENT_COMMAND_TIMEOUT_SECONDS:-0}"
 SERVER_COMPLETION_TIMEOUT_SECONDS="${SERVER_COMPLETION_TIMEOUT_SECONDS:-$CLIENT_COMMAND_TIMEOUT_SECONDS}"
 RESOURCE_SAMPLE_INTERVAL_SECONDS="${RESOURCE_SAMPLE_INTERVAL_SECONDS:-1}"
 RESOURCE_LOG_INTERVAL_SECONDS="${RESOURCE_LOG_INTERVAL_SECONDS:-10}"
@@ -27,7 +27,7 @@ PROGRAM_ORDER=(
 # 原始-finesse-g5
 # 安全-odess_start-g5
 # 原始-finesse-g6
-安全-odess_start-g6
+# 安全-odess_start-g6
 安全-odess_start-g3
 原始-finesse-g3
 安全-odess_start-g2
@@ -36,6 +36,22 @@ PROGRAM_ORDER=(
 原始-finesse-g1
 # 原始-finesse-g4
 # 安全-odess_start-g4
+
+
+Plain-finesse-g1
+Plain-finesse-g2
+Plain-finesse-g3
+Plain-finesse-g4
+Plain-finesse-g5
+Plain-finesse-g6
+
+
+# MLE-finesse-g1
+# MLE-finesse-g2
+# MLE-finesse-g3
+# MLE-finesse-g4
+# MLE-finesse-g5
+# MLE-finesse-g6
 )
 
   
@@ -52,6 +68,21 @@ declare -A PROJECT_DIRS=(
     [原始-finesse-g4]="/home/user2/代码/测试/原始---wd/edrstore-main/EDRStore"
     [原始-finesse-g5]="/home/user2/代码/测试/原始---wd/edrstore-main copy 4/EDRStore"
     [原始-finesse-g6]="/home/user2/代码/测试/原始---wd/edrstore-main copy 5/EDRStore"
+
+    # [MLE-finesse-g1]="/home/user2/server--/原始/MLE/edrstore-main copy/EDRStore"
+    # [MLE-finesse-g2]="/home/user2/server--/原始/MLE/edrstore-main copy 2/EDRStore"
+    # [MLE-finesse-g3]="/home/user2/server--/原始/MLE/edrstore-main copy 3/EDRStore"
+    # [MLE-finesse-g4]="/home/user2/server--/原始/MLE/edrstore-main/EDRStore"
+    # [MLE-finesse-g5]="/home/user2/server--/原始/MLE/edrstore-main copy 4/EDRStore"
+    # [MLE-finesse-g6]="/home/user2/server--/原始/MLE/edrstore-main copy 5/EDRStore"
+
+    [Plain-finesse-g1]="/home/user2/server--/原始/MLE/edrstore-main copy/Baseline"
+    [Plain-finesse-g2]="/home/user2/server--/原始/MLE/edrstore-main copy 2/Baseline"
+    [Plain-finesse-g3]="/home/user2/server--/原始/MLE/edrstore-main copy 3/Baseline"
+    [Plain-finesse-g4]="/home/user2/server--/原始/MLE/edrstore-main/Baseline"
+    [Plain-finesse-g5]="/home/user2/server--/原始/MLE/edrstore-main copy 4/Baseline"
+    [Plain-finesse-g6]="/home/user2/server--/原始/MLE/edrstore-main copy 5/Baseline"
+
 
 
     [安全-odess_start-g1]="/home/user2/代码/测试/XTS基础上/终版/edrstore-main copy/EDRStore"
@@ -580,6 +611,10 @@ validate_environment() {
 
     local program_name project_dir
     for program_name in "${PROGRAM_ORDER[@]}"; do
+        if [[ -z "${PROJECT_DIRS[$program_name]+x}" ]]; then
+            echo "Program has no PROJECT_DIRS mapping: $program_name" >&2
+            exit 1
+        fi
         project_dir="${PROJECT_DIRS[$program_name]}"
         [[ -d "$project_dir" ]] || {
             echo "Project directory does not exist: $project_dir" >&2
@@ -875,11 +910,11 @@ run_one_dataset() {
 usage() {
     cat <<'USAGE'
 Usage:
-  /home/user2/数据/run_edrstore_all.sh
-  /home/user2/数据/run_edrstore_all.sh --list
-  /home/user2/数据/run_edrstore_all.sh --program PROGRAM
+  /home/user2/server--/run_edrstore_all.sh
+  /home/user2/server--/run_edrstore_all.sh --list
+  /home/user2/server--/run_edrstore_all.sh --program PROGRAM
 
-PROGRAM: xts_1n_stat_odess_start | xts_1n_tree_odess_start | original_安全
+PROGRAM: use --list to show configured programs and datasets
 USAGE
 }
 

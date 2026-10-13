@@ -11,6 +11,10 @@
 
 #include "../../include/database/leveldb_db.h"
 
+namespace {
+constexpr size_t LEVELDB_BLOCK_CACHE_BYTES = 256ULL << 20;
+}
+
 /**
  * @brief Construct a new Database object
  * 
@@ -50,7 +54,8 @@ bool LeveldbDatabase::OpenDB(string db_name) {
     db_name_ = db_name;
 
     options_.create_if_missing = true;
-    options_.block_cache = leveldb::NewLRUCache(2 << 30); // 256MB cache
+    options_.block_cache = leveldb::NewLRUCache(
+        LEVELDB_BLOCK_CACHE_BYTES);
     leveldb::Status status = leveldb::DB::Open(options_, db_name_,
         &level_db_obj_);
     assert(status.ok());

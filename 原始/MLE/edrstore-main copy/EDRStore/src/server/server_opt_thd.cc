@@ -13,6 +13,12 @@
 
 #include <filesystem>
 
+#ifdef EDRSTORE_USE_JEMALLOC
+#include <jemalloc/jemalloc.h>
+#define EDRSTORE_STRINGIFY_IMPL(value) #value
+#define EDRSTORE_STRINGIFY(value) EDRSTORE_STRINGIFY_IMPL(value)
+#endif
+
 /**
  * @brief Construct a new ServerOptThd object
  * 
@@ -376,6 +382,10 @@ void ServerOptThd::Run(SSL* client_ssl) {
     uint64_t total_cache_size = 0;
     cur_client->_total_cache_size = &total_cache_size;
     delete cur_client;
+#ifdef EDRSTORE_USE_JEMALLOC
+    mallctl("arena." EDRSTORE_STRINGIFY(MALLCTL_ARENAS_ALL) ".purge",
+        nullptr, nullptr, nullptr, 0);
+#endif
     if (opt_type == UPLOAD_OPT) {
         this->PrintClientLog(total_cache_size);
     }

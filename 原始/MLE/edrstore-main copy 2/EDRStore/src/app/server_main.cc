@@ -28,10 +28,29 @@ AbsDatabase* fp_2_addr_db;
 AbsDatabase* feature_2_fp_db;
 vector<boost::thread*> thd_list;
 
+#ifdef EDRSTORE_USE_JEMALLOC
+extern "C" {
+const char* malloc_conf =
+    "background_thread:true,narenas:4,dirty_decay_ms:1000,muzzy_decay_ms:1000";
+}
+#endif
+
 // the server main thread
 ServerOptThd* server_opt_thd;
 
 string my_name = "EDRServer";
+
+void ReapCompletedThreads() {
+    auto it = thd_list.begin();
+    while (it != thd_list.end()) {
+        if ((*it)->timed_join(boost::posix_time::milliseconds(0))) {
+            delete *it;
+            it = thd_list.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
 
 void Usage() {
     fprintf(stderr, "Usage: %s\n", 
@@ -99,6 +118,7 @@ int main(int argc, char* argv[]) {
      */
 
     while (true) {
+        ReapCompletedThreads();
         tool::Logging(my_name.c_str(), "waiting the req from the client.\n");
         SSL* client_ssl = server_channel->ListenSSL().second;
         tmp_thd = new boost::thread(attrs, boost::bind(&ServerOptThd::Run,

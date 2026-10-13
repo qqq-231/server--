@@ -22,7 +22,7 @@
 #define EDR_BREAKDOWN
 
 // chunk type     数据块设置
-static const size_t MAX_CHUNK_SIZE = (1 << 14);// 16KB (最大分块大小)
+static const size_t MAX_CHUNK_SIZE = (1 << 15);// 32KB (最大分块大小)
 
 static const uint32_t CHUNK_QUEUE_SIZE = (1024 * 4);// 4096 (块队列容量)
 static const size_t THREAD_STACK_SIZE = (8*1024*1024);// 8MB (线程栈大小)
