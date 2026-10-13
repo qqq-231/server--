@@ -10,6 +10,7 @@
  */
 
 #include "../../include/server/dual_dedup_thd.h"
+#include "../../include/util/performance_stats.h"
 
 DualDedupThd::DualDedupThd(AbsDatabase* fp_2_addr_db) {
     fp_2_addr_db_ = fp_2_addr_db;
@@ -72,9 +73,15 @@ void DualDedupThd::Run(ClientVar* cur_client) {
                     gettimeofday(&_cipher_feature_stime, NULL);
 #endif
                         // compute the feature here
+                        const auto performance_feature_start =
+                            PerformanceStats::Clock::now();
                         finesse_util_->ExtractFeature(cur_client->_rabin_ctx,
                             input_data.data, input_data.info.size,
                             input_data.info.features);
+                        _performance_feature_extraction_time_ns.fetch_add(
+                            PerformanceStats::ElapsedNs(
+                                performance_feature_start),
+                            std::memory_order_relaxed);
 #ifdef EDR_BREAKDOWN
                     gettimeofday(&_cipher_feature_etime, NULL);
                     _total_cipher_feature_time += tool::GetTimeDiff(

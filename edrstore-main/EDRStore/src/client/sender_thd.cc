@@ -10,6 +10,7 @@
  */
 
 #include "../../include/client/sender_thd.h"
+#include "../../include/util/performance_stats.h"
 
 /**
  * @brief Construct a new SenderThd object
@@ -107,11 +108,16 @@ void SenderThd::Run(AbsMQ<SelectComp2Sender_t>* input_MQ) {
                 case COMPRESSED_NORMAL_CHUNK: {
                     // this a compressed normal chunk (compressed chunk -> new base chunk)
                     // perform re-encryption
+                    const auto performance_encryption_start =
+                        PerformanceStats::Clock::now();
                     tmp_data.send_chunk.header.size = two_phase_enc_->TwoPhaseEncChunk(
                         tmp_data.send_chunk.data,
                         tmp_data.send_chunk.header.size,
                         tmp_data.key_recipe.key,
                         tmp_enc_buf);
+                    _performance_encryption_time_ns +=
+                        PerformanceStats::ElapsedNs(
+                            performance_encryption_start);
                     tmp_data.send_chunk.header.type = NORMAL_CHUNK;
                     
                     memcpy(send_chunk_buf_.data_buf + send_chunk_buf_.header->size,

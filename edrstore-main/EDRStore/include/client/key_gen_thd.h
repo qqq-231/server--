@@ -68,6 +68,8 @@ class KeyGenThd {
         void ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ);
     
     public:
+        uint64_t _performance_encryption_time_ns = 0;
+        uint64_t _performance_key_generation_time_ns = 0;
 #ifdef EDR_BREAKDOWN
         struct timeval _two_enc_stime;
         struct timeval _two_enc_etime;

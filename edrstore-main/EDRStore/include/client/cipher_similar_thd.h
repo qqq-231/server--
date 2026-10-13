@@ -67,6 +67,7 @@ class CipherSimilarThd {
 
 
     public:
+        uint64_t _performance_feature_time_ns = 0;
 #ifdef EDR_BREAKDOWN
         struct timeval _cipher_feature_stime;
         struct timeval _cipher_feature_etime;

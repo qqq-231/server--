@@ -10,6 +10,7 @@
  */
 
 #include "../../include/client/key_gen_thd.h"
+#include "../../include/util/performance_stats.h"
 
 /**
  * @brief Construct a new KeyGenThd object
@@ -177,6 +178,8 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
     send_buf_.header->cur_item_num = cur_batch_size;
     send_buf_.header->client_id = config.GetClientID();
     send_buf_.header->msg_type = CLIENT_KEY_GEN;
+    const auto performance_key_request_start =
+        PerformanceStats::Clock::now();
 
 #ifdef EDR_BREAKDOWN
     gettimeofday(&_key_gen_stime, NULL);
@@ -193,6 +196,8 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
         tool::Logging(my_name_.c_str(), "recv the key gen batch error.\n");
         exit(EXIT_FAILURE);
     }
+    _performance_key_generation_time_ns += PerformanceStats::ElapsedNs(
+        performance_key_request_start);
 
 #ifdef EDR_BREAKDOWN
     gettimeofday(&_key_gen_etime, NULL);
@@ -211,6 +216,8 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
         //chunk_buf_[i].seed = this->ConvertFp2Val(chunk_buf_[i].feature_chunk.chunk.raw_chunk.fp, CHUNK_HASH_SIZE);
 
         chunk_buf_[i].seed = 123456789;
+        const auto performance_key_derive_start =
+            PerformanceStats::Clock::now();
 
 #ifdef EDR_BREAKDOWN
     gettimeofday(&_key_gen_stime, NULL);
@@ -234,6 +241,8 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
             sizeof(tmp_generating_key_buf), chunk_buf_[i].key);
         OPENSSL_cleanse(tmp_generating_key_buf,
             sizeof(tmp_generating_key_buf));
+        _performance_key_generation_time_ns += PerformanceStats::ElapsedNs(
+            performance_key_derive_start);
 
 #ifdef EDR_BREAKDOWN
     gettimeofday(&_key_gen_etime, NULL);
@@ -245,6 +254,8 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
         gettimeofday(&_two_enc_stime, NULL);
 #endif
 
+        const auto performance_encryption_start =
+            PerformanceStats::Clock::now();
        // encrypt the chunk here
         chunk_buf_[i].enc_size = two_phase_enc_->TwoPhaseEncChunk(
             chunk_buf_[i].feature_chunk.chunk.raw_chunk.data,
@@ -252,6 +263,8 @@ void KeyGenThd::ProcessBatch(AbsMQ<EncFeatureChunk_t>* output_MQ) {
             chunk_buf_[i].key,
             chunk_buf_[i].enc_data
         );
+        _performance_encryption_time_ns += PerformanceStats::ElapsedNs(
+            performance_encryption_start);
 
         
 //                       chunk_buf_[i].enc_size =

@@ -10,6 +10,7 @@
  */
 
 #include "../../include/client/plain_similar_thd.h"
+#include "../../include/util/performance_stats.h"
 
 #include "../../include/chunker/odess_start.h"
 
@@ -127,6 +128,8 @@ void PlainSimilarThd::Run(AbsMQ<Chunk_t>* input_MQ,
 
         if (input_MQ->Pop(tmp_data.chunk)) {
             // extract a chunk from the MQ
+            const auto performance_feature_start =
+                PerformanceStats::Clock::now();
 #ifdef EDR_BREAKDOWN
             gettimeofday(&_plain_feature_stime, NULL);
 #endif
@@ -195,6 +198,11 @@ void PlainSimilarThd::Run(AbsMQ<Chunk_t>* input_MQ,
                     tool::Logging(my_name_.c_str(), "wrong chunk type.\n");
                     exit(EXIT_FAILURE);
                 }
+            }
+
+            if (tmp_data.chunk.type == NORMAL_CHUNK) {
+                _performance_feature_time_ns += PerformanceStats::ElapsedNs(
+                    performance_feature_start);
             }
 
 #ifdef EDR_BREAKDOWN

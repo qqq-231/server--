@@ -10,6 +10,7 @@
  */
 
 #include "../../include/client/select_comp_thd.h"
+#include "../../include/util/performance_stats.h"
 
 /**
  * @brief Construct a new SelectCompThd object
@@ -202,7 +203,12 @@ bool SelectCompThd::FullEDR(EncFeatureChunk_t* input_chunk,
             gettimeofday(&_cache_manage_stime, NULL);
 #endif
 
-            is_similar = cache_meta_->QueryCacheMeta(input_chunk->feature_chunk.features);
+            const auto performance_search_start =
+                PerformanceStats::Clock::now();
+            is_similar = cache_meta_->QueryCacheMeta(
+                input_chunk->feature_chunk.features);
+            _performance_similarity_search_time_ns +=
+                PerformanceStats::ElapsedNs(performance_search_start);
 
 #ifdef EDR_BREAKDOWN
             gettimeofday(&_cache_manage_etime, NULL);
@@ -233,12 +239,16 @@ bool SelectCompThd::FullEDR(EncFeatureChunk_t* input_chunk,
                     input_chunk->seed);
                 
                 // encrypt the chunk here
+                const auto performance_encryption_start =
+                    PerformanceStats::Clock::now();
                 uint64_t enc_size = two_phase_enc_->TwoPhaseEncChunk(
                     compressed_data,
                     compressed_size,
                     input_chunk->key,
                     enc_data
                 );
+                _performance_encryption_time_ns +=
+                    PerformanceStats::ElapsedNs(performance_encryption_start);
 
                 crypto_util_->GenerateHash(md_ctx, enc_data, enc_size, 
                     output_chunk->send_chunk.header.compressed_fp);

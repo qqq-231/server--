@@ -10,6 +10,7 @@
  */
 
 #include "../../include/server/data_writer_thd.h"
+#include "../../include/util/performance_stats.h"
 
 /**
  * @brief Construct a new DataWriterThd object
@@ -72,8 +73,13 @@ void DataWriterThd::Run(ClientVar* cur_client) {
                     break;
                 }
                 case UNIQUE_CHUNK: {
+                    const auto performance_search_start =
+                        PerformanceStats::Clock::now();
                     similar_policy_->FindBaseChunk(binary_tree_index_,
                         fp_2_addr_db_, &tmp_data.info);
+                    _performance_similarity_search_time_ns.fetch_add(
+                        PerformanceStats::ElapsedNs(performance_search_start),
+                        std::memory_order_relaxed);
                     switch (tmp_data.info.stat) {
                         case SIMILAR_CHUNK: {
                             _total_similar_chunk_num++;
@@ -159,8 +165,12 @@ void DataWriterThd::ProcSimilarChunk(WrappedChunk_t* input_chunk,
     //计算当前块与基准块的差异
     //生成增量编码数据
     //增量编码
+    const auto performance_delta_start = PerformanceStats::Clock::now();
     delta_chunk_size = delta_comp_->DeltaEncode(base_chunk, base_chunk_size,
         input_chunk->data, input_chunk->info.size, delta_chunk);
+    _performance_delta_compression_time_ns.fetch_add(
+        PerformanceStats::ElapsedNs(performance_delta_start),
+        std::memory_order_relaxed);
 //存储增量数据
     storage_core_->WriteChunk(&input_chunk->info.addr, delta_chunk,
         delta_chunk_size, cur_client);

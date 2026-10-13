@@ -31,6 +31,7 @@
 // for download 下载
 #include "../../include/client/download_writer_thd.h"
 #include "../../include/client/data_retriever_thd.h"
+#include "../../include/util/performance_stats.h"
 
 #include <boost/thread/thread.hpp>
 
@@ -89,6 +90,58 @@ void Usage() {
         my_name.c_str());
     return ;
 }
+
+#ifdef EDR_BREAKDOWN
+void PrintClientPerformanceInfo(const string& dataset, uint32_t opt_type,
+    uint64_t logical_size, uint64_t operation_time_ns,
+    uint64_t encryption_time_ns, uint64_t key_generation_time_ns,
+    uint64_t feature_extraction_time_ns,
+    uint64_t similarity_search_time_ns) {
+    const double operation_time_ms = PerformanceStats::NsToMs(
+        operation_time_ns);
+    const double throughput = operation_time_ns == 0 ? 0.0 :
+        PerformanceStats::BytesToMB(logical_size) /
+        (static_cast<double>(operation_time_ns) / 1000000000.0);
+    const double logical_gb = static_cast<double>(logical_size) /
+        1000000000.0;
+    const double encryption_time_ms = PerformanceStats::NsToMs(
+        encryption_time_ns);
+    const double key_generation_time_ms = PerformanceStats::NsToMs(
+        key_generation_time_ns);
+
+    breakdown_client_file_hdl << fixed << setprecision(3);
+    breakdown_client_file_hdl << "======== Performance Info ========\n";
+    breakdown_client_file_hdl << "Dataset: " << dataset << "\n";
+    breakdown_client_file_hdl << "Version: SECURE\n";
+    breakdown_client_file_hdl << "Status: " << (opt_type == UPLOAD_OPT ?
+        "UPLOAD_SUCCESS" : "DOWNLOAD_SUCCESS") << "\n";
+    breakdown_client_file_hdl << "Logical Size(Byte): " << logical_size << "\n";
+    breakdown_client_file_hdl << "Upload Time(ms): " <<
+        (opt_type == UPLOAD_OPT ? operation_time_ms : 0.0) << "\n";
+    breakdown_client_file_hdl << "Upload Throughput(MB/s): " <<
+        (opt_type == UPLOAD_OPT ? throughput : 0.0) << "\n";
+    breakdown_client_file_hdl << "Download Time(ms): " <<
+        (opt_type == DOWNLOAD_OPT ? operation_time_ms : 0.0) << "\n";
+    breakdown_client_file_hdl << "Download Throughput(MB/s): " <<
+        (opt_type == DOWNLOAD_OPT ? throughput : 0.0) << "\n";
+    breakdown_client_file_hdl << "Encryption Time(ms): " <<
+        encryption_time_ms << "\n";
+    breakdown_client_file_hdl << "Encryption Cost(ms/GB): " <<
+        (logical_gb == 0.0 ? 0.0 : encryption_time_ms / logical_gb) << "\n";
+    breakdown_client_file_hdl << "Key Generation Time(ms): " <<
+        key_generation_time_ms << "\n";
+    breakdown_client_file_hdl << "Key Generation Cost(ms/GB): " <<
+        (logical_gb == 0.0 ? 0.0 : key_generation_time_ms / logical_gb) << "\n";
+    breakdown_client_file_hdl << "Feature Extraction Time(ms): " <<
+        PerformanceStats::NsToMs(feature_extraction_time_ns) << "\n";
+    breakdown_client_file_hdl << "Similarity Search Time(ms): " <<
+        PerformanceStats::NsToMs(similarity_search_time_ns) << "\n";
+    breakdown_client_file_hdl << "Peak Memory(MB): " <<
+        static_cast<double>(tool::GetMaxMemoryUsage()) / 1024.0 << "\n";
+    breakdown_client_file_hdl << "==================================\n";
+    breakdown_client_file_hdl.flush();
+}
+#endif
 
 int main(int argc, char* argv[]) {
     // for log file
@@ -212,6 +265,7 @@ int main(int argc, char* argv[]) {
     if (opt_type == UPLOAD_OPT) {
         upload_start_time = chrono::steady_clock::now();
     }
+    const auto performance_operation_start = PerformanceStats::Clock::now();
 
 //用于存储指向所有工作线程的指针，方便后续统一管理（如等待所有线程结束）。
     vector<boost::thread*> thd_list;
@@ -413,6 +467,8 @@ int main(int argc, char* argv[]) {
 	    for (auto it : thd_list) {
                 it->join();//启动thd_list里的线程执行
             }
+            const uint64_t performance_operation_time_ns =
+                PerformanceStats::ElapsedNs(performance_operation_start);
             gettimeofday(&etime, NULL);//结束计时
 	    total_time += tool::GetTimeDiff(stime, etime);
             total_upload_time_ms = chrono::duration<double, milli>(
@@ -510,6 +566,17 @@ int main(int argc, char* argv[]) {
                 sizeof(double));
 
             out_breakdown_stat_hdl.close();//写文件显式关闭
+
+            PrintClientPerformanceInfo(input_file_path, UPLOAD_OPT,
+                chunk_fp_thd->_total_file_size,
+                performance_operation_time_ns,
+                key_gen_thd->_performance_encryption_time_ns +
+                    select_comp_thd->_performance_encryption_time_ns +
+                    sender_thd->_performance_encryption_time_ns,
+                key_gen_thd->_performance_key_generation_time_ns,
+                plain_similar_thd->_performance_feature_time_ns +
+                    cipher_similar_thd->_performance_feature_time_ns,
+                select_comp_thd->_performance_similarity_search_time_ns);
 #endif
 
 } // end if (login_ok)
@@ -592,6 +659,8 @@ int main(int argc, char* argv[]) {
             for (auto it : thd_list) {
                 it->join();
             }
+            const uint64_t performance_operation_time_ns =
+                PerformanceStats::ElapsedNs(performance_operation_start);
             gettimeofday(&etime, NULL);
             total_time += tool::GetTimeDiff(stime, etime);
             tool::Logging(my_name.c_str(), "%s finish.\n", input_file_path.c_str());
@@ -609,6 +678,12 @@ int main(int argc, char* argv[]) {
                 << data_retriever_thd->_total_recv_data_size << ", "
                 << data_retriever_thd->_total_recv_chunk_num << ", "
                 << "0, " << total_time << ", " << speed << endl;
+
+#ifdef EDR_BREAKDOWN
+            PrintClientPerformanceInfo(input_file_path, DOWNLOAD_OPT,
+                data_retriever_thd->_total_recv_data_size,
+                performance_operation_time_ns, 0, 0, 0, 0);
+#endif
 
             delete data_retriever_thd;
             delete download_writer_thd;

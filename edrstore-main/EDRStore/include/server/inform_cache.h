@@ -87,7 +87,8 @@ class InformCache {
          * @return false cannot perform delta compression
          */
         bool ProcessNormalChunk(WrappedChunk_t* input_chunk,
-            WrappedChunk_t* output_chunk);
+            WrappedChunk_t* output_chunk, uint64_t* similarity_search_time_ns,
+            uint64_t* delta_compression_time_ns);
         
         /**
          * @brief process normal chunk

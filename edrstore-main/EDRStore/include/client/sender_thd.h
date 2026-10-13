@@ -74,6 +74,7 @@ class SenderThd {
     public:
         uint64_t _total_send_data_size = 0;
         uint64_t _cur_version_idx_size = 0;
+        uint64_t _performance_encryption_time_ns = 0;
 
         /**
          * @brief Construct a new SenderThd object

@@ -68,6 +68,8 @@ class SelectCompThd {
             cache_chunk, SelectComp2Sender_t* output_chunk);
 
     public:
+        uint64_t _performance_similarity_search_time_ns = 0;
+        uint64_t _performance_encryption_time_ns = 0;
 #ifdef EDR_BREAKDOWN
         struct timeval _comp_pad_stime;
         struct timeval _comp_pad_etime;

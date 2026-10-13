@@ -282,6 +282,14 @@ void ServerOptThd::Run(SSL* client_ssl) {
     }
     // check done
 
+    // Take request-local counter deltas; persistent totals are left untouched.
+    const PerformanceSnapshot performance_before =
+        this->TakePerformanceSnapshot();
+    const auto performance_operation_start = PerformanceStats::Clock::now();
+    PeakMemoryMonitor performance_memory_monitor;
+    performance_memory_monitor.Start();
+    uint64_t performance_logical_size = 0;
+
     // init the vars for this client    初始化此客户端的变量
     ClientVar* cur_client;
     switch (opt_type) {
@@ -340,6 +348,8 @@ void ServerOptThd::Run(SSL* client_ssl) {
             recv_buf.header->msg_type = SERVER_LOGIN_RESPONSE;
             cur_client->_recipe_read_hdl.read((char*)recv_buf.data_buf,
                 sizeof(FileRecipeHead_t));
+            performance_logical_size =
+                ((FileRecipeHead_t*)recv_buf.data_buf)->size;
 
             // 断点续传：跳过前 start_chunk_idx 个chunk指纹
             if (start_chunk_idx > 0) {
@@ -376,6 +386,16 @@ void ServerOptThd::Run(SSL* client_ssl) {
     for (auto it : thd_list) {
         it->join();
     }
+    const uint64_t performance_operation_time_ns =
+        PerformanceStats::ElapsedNs(performance_operation_start);
+    const uint64_t performance_peak_memory_kb =
+        performance_memory_monitor.Stop();
+    const PerformanceSnapshot performance_after =
+        this->TakePerformanceSnapshot();
+    if (opt_type == UPLOAD_OPT) {
+        performance_logical_size = performance_after.logical_size -
+            performance_before.logical_size;
+    }
     gettimeofday(&etime, NULL);
     total_time += tool::GetTimeDiff(stime, etime);
 
@@ -398,6 +418,9 @@ void ServerOptThd::Run(SSL* client_ssl) {
         binary_tree_index_->RecordFileRecipe(file_name, recipe_path);
         this->PrintClientLog(total_cache_size);
     }
+    this->PrintPerformanceInfo(file_name, opt_type, performance_before,
+        performance_after, performance_logical_size,
+        performance_operation_time_ns, performance_peak_memory_kb);
     free(recv_buf.send_buf);
     this->UnlockClientID(client_id);
 
@@ -405,6 +428,94 @@ void ServerOptThd::Run(SSL* client_ssl) {
         client_id, total_time); 
 
     return ;
+}
+
+ServerOptThd::PerformanceSnapshot
+ServerOptThd::TakePerformanceSnapshot() const {
+    PerformanceSnapshot snapshot;
+    snapshot.logical_size = data_recv_thd_->_total_logical_data_size;
+    snapshot.storage_size = storage_core_->_write_data_size;
+    snapshot.similar_chunk_num =
+        cache_comp_thd_->_total_similar_chunk_num +
+        data_writer_thd_->_total_similar_chunk_num;
+    snapshot.delta_size = cache_comp_thd_->_total_delta_size +
+        data_writer_thd_->_total_delta_size;
+    snapshot.feature_extraction_time_ns =
+        data_recv_thd_->_performance_feature_extraction_time_ns.load(
+            std::memory_order_relaxed) +
+        dual_dedup_thd_->_performance_feature_extraction_time_ns.load(
+            std::memory_order_relaxed);
+    snapshot.similarity_search_time_ns =
+        cache_comp_thd_->_performance_similarity_search_time_ns.load(
+            std::memory_order_relaxed) +
+        data_writer_thd_->_performance_similarity_search_time_ns.load(
+            std::memory_order_relaxed);
+    snapshot.delta_compression_time_ns =
+        cache_comp_thd_->_performance_delta_compression_time_ns.load(
+            std::memory_order_relaxed) +
+        data_writer_thd_->_performance_delta_compression_time_ns.load(
+            std::memory_order_relaxed);
+    return snapshot;
+}
+
+void ServerOptThd::PrintPerformanceInfo(const string& dataset, int opt_type,
+    const PerformanceSnapshot& before, const PerformanceSnapshot& after,
+    uint64_t logical_size, uint64_t operation_time_ns,
+    uint64_t peak_memory_kb) {
+    const uint64_t storage_size = after.storage_size - before.storage_size;
+    const uint64_t similar_chunk_num = after.similar_chunk_num -
+        before.similar_chunk_num;
+    const uint64_t delta_size = after.delta_size - before.delta_size;
+    const uint64_t feature_time_ns = after.feature_extraction_time_ns -
+        before.feature_extraction_time_ns;
+    const uint64_t search_time_ns = after.similarity_search_time_ns -
+        before.similarity_search_time_ns;
+    const uint64_t delta_time_ns = after.delta_compression_time_ns -
+        before.delta_compression_time_ns;
+    const double operation_time_ms = PerformanceStats::NsToMs(
+        operation_time_ns);
+    const double throughput = operation_time_ns == 0 ? 0.0 :
+        PerformanceStats::BytesToMB(logical_size) /
+        (static_cast<double>(operation_time_ns) / 1000000000.0);
+    const double compression_ratio = storage_size == 0 ? 0.0 :
+        static_cast<double>(logical_size) /
+        static_cast<double>(storage_size);
+
+    ofstream output("breakdown-server-file", ios_base::app | ios_base::out);
+    if (!output.is_open()) {
+        tool::Logging(my_name_.c_str(),
+            "cannot open the server breakdown log file.\n");
+        return;
+    }
+    output << fixed << setprecision(3);
+    output << "======== Performance Info ========\n";
+    output << "Dataset: " << dataset << "\n";
+    output << "Version: SECURE\n";
+    output << "Status: " << (opt_type == UPLOAD_OPT ?
+        "UPLOAD_SUCCESS" : "DOWNLOAD_SUCCESS") << "\n";
+    output << "Logical Size(Byte): " << logical_size << "\n";
+    output << "Storage Size(Byte): " << storage_size << "\n";
+    output << "Compression Ratio: " << compression_ratio << "\n";
+    output << "Similar Chunk Num: " << similar_chunk_num << "\n";
+    output << "Delta Size(Byte): " << delta_size << "\n";
+    output << "Upload Time(ms): " << (opt_type == UPLOAD_OPT ?
+        operation_time_ms : 0.0) << "\n";
+    output << "Upload Throughput(MB/s): " << (opt_type == UPLOAD_OPT ?
+        throughput : 0.0) << "\n";
+    output << "Download Time(ms): " << (opt_type == DOWNLOAD_OPT ?
+        operation_time_ms : 0.0) << "\n";
+    output << "Download Throughput(MB/s): " << (opt_type == DOWNLOAD_OPT ?
+        throughput : 0.0) << "\n";
+    output << "Feature Extraction Time(ms): " <<
+        PerformanceStats::NsToMs(feature_time_ns) << "\n";
+    output << "Similarity Search Time(ms): " <<
+        PerformanceStats::NsToMs(search_time_ns) << "\n";
+    output << "Delta Compression Time(ms): " <<
+        PerformanceStats::NsToMs(delta_time_ns) << "\n";
+    output << "Peak Memory(MB): " <<
+        static_cast<double>(peak_memory_kb) / 1024.0 << "\n";
+    output << "==================================\n";
+    output.flush();
 }
 
 /**

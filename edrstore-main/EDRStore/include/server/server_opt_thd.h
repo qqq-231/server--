@@ -33,6 +33,7 @@
 #include "../reduction/dedup_detect.h"
 #include "../reduction/delta_comp.h"
 #include "../reduction/binary_tree_index.h"
+#include "../util/performance_stats.h"
 
 using namespace std;
 
@@ -45,6 +46,16 @@ class ServerOptThd {
             uint64_t key_recipe_bytes = 0;
             uint64_t file_recipe_count = 0;
             uint64_t key_recipe_count = 0;
+        };
+
+        struct PerformanceSnapshot {
+            uint64_t logical_size = 0;
+            uint64_t storage_size = 0;
+            uint64_t similar_chunk_num = 0;
+            uint64_t delta_size = 0;
+            uint64_t feature_extraction_time_ns = 0;
+            uint64_t similarity_search_time_ns = 0;
+            uint64_t delta_compression_time_ns = 0;
         };
 
         string my_name_ = "ServerOptThd";
@@ -124,6 +135,12 @@ class ServerOptThd {
          * @param total_cache_size total cache size
          */
         void PrintClientLog(uint64_t total_cache_size);
+
+        PerformanceSnapshot TakePerformanceSnapshot() const;
+        void PrintPerformanceInfo(const string& dataset, int opt_type,
+            const PerformanceSnapshot& before,
+            const PerformanceSnapshot& after, uint64_t logical_size,
+            uint64_t operation_time_ns, uint64_t peak_memory_kb);
 
     public:
         uint64_t _total_upload_opt_num = 0;

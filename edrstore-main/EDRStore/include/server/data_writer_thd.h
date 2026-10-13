@@ -74,6 +74,8 @@ class DataWriterThd {
             ClientVar* cur_client);
 
     public:
+        std::atomic<uint64_t> _performance_similarity_search_time_ns{0};
+        std::atomic<uint64_t> _performance_delta_compression_time_ns{0};
         // for delta compression
         uint64_t _total_similar_chunk_num = 0;
         uint64_t _total_similar_data_size = 0;

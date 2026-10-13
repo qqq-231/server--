@@ -73,6 +73,7 @@ class DataRecvThd{
         void ProcessEvictFeature(ClientVar* cur_client);
 
     public:
+        std::atomic<uint64_t> _performance_feature_extraction_time_ns{0};
         uint64_t _chunk_batch_num = 0;
         uint64_t _total_recv_chunk_num = 0;
         uint64_t _total_recv_data_size = 0;

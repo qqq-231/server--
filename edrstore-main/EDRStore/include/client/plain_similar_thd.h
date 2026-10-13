@@ -79,6 +79,7 @@ class PlainSimilarThd {
 
 
     public:
+        uint64_t _performance_feature_time_ns = 0;
 #ifdef EDR_BREAKDOWN
         struct timeval _plain_feature_stime;// 特征提取开始时间
         struct timeval _plain_feature_etime;// 特征提取结束时间

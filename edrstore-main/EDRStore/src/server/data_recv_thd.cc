@@ -10,6 +10,7 @@
  */
 
 #include "../../include/server/data_recv_thd.h"
+#include "../../include/util/performance_stats.h"
 
 /**
  * @brief Construct a new DataRecvThd object
@@ -318,9 +319,14 @@ void DataRecvThd::ProcessChunks(ClientVar* cur_client) {
 #endif
 
                     // compute the feature here
+                    const auto performance_feature_start =
+                        PerformanceStats::Clock::now();
                     finesse_util_->ExtractFeature(cur_client->_rabin_ctx,
                         tmp_chunk.data, tmp_chunk.info.size,
                         tmp_chunk.info.features);
+                    _performance_feature_extraction_time_ns.fetch_add(
+                        PerformanceStats::ElapsedNs(performance_feature_start),
+                        std::memory_order_relaxed);
 
 #ifdef EDR_BREAKDOWN
                     gettimeofday(&_cipher_feature_etime, NULL);

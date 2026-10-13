@@ -10,6 +10,7 @@
  */
 
 #include "../../include/client/cipher_similar_thd.h"
+#include "../../include/util/performance_stats.h"
 
 /**
  * @brief Construct a new Cipher Similar Thd object
@@ -126,6 +127,8 @@ void CipherSimilarThd::Run(AbsMQ<EncFeatureChunk_t>* input_MQ,
 
         if (input_MQ->Pop(tmp_data)) {
             // extract a chunk from the MQ
+            const auto performance_feature_start =
+                PerformanceStats::Clock::now();
 #ifdef EDR_BREAKDOWN
             gettimeofday(&_cipher_feature_stime, NULL);
 #endif
@@ -195,6 +198,11 @@ void CipherSimilarThd::Run(AbsMQ<EncFeatureChunk_t>* input_MQ,
                     tool::Logging(my_name_.c_str(), "wrong chunk type.\n");
                     exit(EXIT_FAILURE);
                 }
+            }
+
+            if (tmp_data.feature_chunk.chunk.type == NORMAL_CHUNK) {
+                _performance_feature_time_ns += PerformanceStats::ElapsedNs(
+                    performance_feature_start);
             }
 
 #ifdef EDR_BREAKDOWN

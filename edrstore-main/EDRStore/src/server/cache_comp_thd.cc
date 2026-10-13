@@ -73,8 +73,18 @@ void CacheCompThd::Run(ClientVar* cur_client) {
                     gettimeofday(&_cache_delta_stime, NULL);
 #endif
                         // 在缓存中查找相似块
-                    bool is_similar = inform_cache->ProcessNormalChunk(&input_data,
-                        &output_data);
+                    uint64_t performance_search_time_ns = 0;
+                    uint64_t performance_delta_time_ns = 0;
+                    bool is_similar = inform_cache->ProcessNormalChunk(
+                        &input_data, &output_data,
+                        &performance_search_time_ns,
+                        &performance_delta_time_ns);
+                    _performance_similarity_search_time_ns.fetch_add(
+                        performance_search_time_ns,
+                        std::memory_order_relaxed);
+                    _performance_delta_compression_time_ns.fetch_add(
+                        performance_delta_time_ns,
+                        std::memory_order_relaxed);
 
 #ifdef EDR_BREAKDOWN
                     gettimeofday(&_cache_delta_etime, NULL);

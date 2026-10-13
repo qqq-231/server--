@@ -10,6 +10,7 @@
  */
 
 #include "../../include/server/inform_cache.h"
+#include "../../include/util/performance_stats.h"
 
 /**
  * @brief Construct a new InformCache object
@@ -93,10 +94,16 @@ void InformCache::InsertCachedChunk(WrappedChunk_t* cache_chunk) {
  * @return false cannot perform delta compression
  */
 bool InformCache::ProcessNormalChunk(WrappedChunk_t* input_chunk,
-    WrappedChunk_t* output_chunk) {
+    WrappedChunk_t* output_chunk, uint64_t* similarity_search_time_ns,
+    uint64_t* delta_compression_time_ns) {
     //查找相似基准块
+    const auto performance_search_start = PerformanceStats::Clock::now();
     similar_policy_->FindBaseChunk(local_feature_2_fp_db_,
         &input_chunk->info);
+    if (similarity_search_time_ns != nullptr) {
+        *similarity_search_time_ns += PerformanceStats::ElapsedNs(
+            performance_search_start);
+    }
     //更新 input_chunk->info.stat 为 SIMILAR_CHUNK 或 NON_SIMILAR_CHUNK
     bool ret = false;
 
@@ -107,12 +114,18 @@ bool InformCache::ProcessNormalChunk(WrappedChunk_t* input_chunk,
                 (char*)input_chunk->info.addr.base_fp,// 基准块的指纹
                 CHUNK_HASH_SIZE, cache_base_chunk_str_)) {// 查询结果存储在这里
                 // 2. 执行增量编码
+                const auto performance_delta_start =
+                    PerformanceStats::Clock::now();
                 output_chunk->info.size = delta_comp_->DeltaEncode(
                     (uint8_t*)&cache_base_chunk_str_[0], // 基准块数据
                     cache_base_chunk_str_.size(),// 基准块大小
                     input_chunk->data, // 当前块数据
                     input_chunk->info.size, // 当前块大小
                     output_chunk->data); // 输出：增量数据
+                if (delta_compression_time_ns != nullptr) {
+                    *delta_compression_time_ns += PerformanceStats::ElapsedNs(
+                        performance_delta_start);
+                }
 
                 // copy the metadata to the input chunk  // 3. 复制元数据
                 memcpy(output_chunk->info.addr.base_fp,                 // 复制基准块指纹
